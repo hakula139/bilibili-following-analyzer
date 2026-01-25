@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from .models import FilteredUser, User
+    from .filters import FilterResult
 
 
 def load_allow_list(path: Path | None) -> set[int]:
@@ -39,53 +39,38 @@ def load_allow_list(path: Path | None) -> set[int]:
     return allow_list
 
 
-def print_results(
-    not_following_back: list[User],
-    no_interaction: list[User],
-    filtered_users: list[FilteredUser] | None = None,
-) -> None:
+def print_filter_results(results: list[FilterResult]) -> None:
     """
-    Print analysis results to stdout.
+    Print filter results to stdout.
 
     Parameters
     ----------
-    not_following_back : list[User]
-        Users who don't follow back and have few followers.
-    no_interaction : list[User]
-        Users who haven't interacted with recent posts.
-    filtered_users : list[FilteredUser] or None, optional
-        Users filtered out by activity criteria.
+    results : list[FilterResult]
+        The filter results to display.
     """
     print('\n' + '=' * 60)
     print('RESULTS')
     print('=' * 60)
 
-    if not_following_back:
-        print(f'\n NOT FOLLOWING BACK ({len(not_following_back)} users):')
-        print('-' * 40)
-        for user in not_following_back:
-            suffix = (
-                f' ({user.follower_count} followers)' if user.follower_count else ''
-            )
-            print(f'{user.name}{suffix} - {user.space_url}')
-    else:
-        print('\n Everyone is following you back (or above follower threshold)!')
+    if not results:
+        print('\nNo users matched the specified filters.')
+        return
 
-    if no_interaction:
-        print(f'\n NO RECENT INTERACTION ({len(no_interaction)} users):')
-        print('-' * 40)
-        for user in no_interaction:
-            suffix = ''
-            if user.follower_count is not None:
-                suffix = f' ({user.follower_count} followers)'
-            print(f'{user.name}{suffix} - {user.space_url}')
-    else:
-        print('\n All followings have interacted with your recent posts!')
+    print(f'\nMATCHED USERS ({len(results)} total):')
+    print('-' * 40)
 
-    if filtered_users:
-        print(f'\n FILTERED (inactive/low-engagement) ({len(filtered_users)} users):')
-        print('-' * 40)
-        for fu in filtered_users:
-            reasons_str = ', '.join(fu.reasons)
-            print(f'{fu.user.name} - {fu.user.space_url}')
-            print(f'  Reason: {reasons_str}')
+    for result in results:
+        user = result.following
+        print(f'{user.name} - {user.space_url}')
+
+        # Show matched filter details
+        details = []
+        for filter_name in result.matched_filters:
+            detail = result.details.get(filter_name)
+            if detail:
+                details.append(detail)
+            else:
+                details.append(filter_name)
+
+        if details:
+            print(f'  └─ {", ".join(details)}')

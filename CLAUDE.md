@@ -19,15 +19,32 @@ uv run ruff format .
 
 ## Architecture
 
-This is a CLI tool for analyzing Bilibili following lists. It identifies users who don't follow back (below a follower threshold) and mutual followers who haven't interacted with recent content.
+This is a CLI tool for analyzing Bilibili following lists using composable filters. Users can combine multiple filter criteria with AND/OR logic to identify followings that match specific patterns.
 
 ### Module Structure
 
 - **`cli.py`** - Entry point, argument parsing, orchestrates the analysis workflow
 - **`client.py`** - `BilibiliClient` class with WBI signature support for authenticated API requests
-- **`analyzer.py`** - Core analysis logic: `collect_interacting_users()`, `analyze_followings()`, and `filter_inactive_users()`
-- **`models.py`** - `User`, `FilterConfig`, and `FilteredUser` dataclasses
+- **`filters.py`** - Composable filter system with `Filter` base class and concrete implementations
 - **`utils.py`** - Allow list loading and result formatting
+
+### Filter System
+
+The filter system uses a composable design pattern:
+
+- **`Filter`** - Abstract base class defining the filter interface
+- **`FilterContext`** - Shared context with cached API data (user stats, activity)
+- **`Following`** - Data class representing a followed user
+- **`FilterResult`** - Result containing matched filters and details
+
+Available filters (use `--list-filters` to see all):
+
+- `not-following-back` - Users who don't follow you back
+- `mutual` - Users who follow you back
+- `below-followers:N` - Users with < N followers
+- `no-interaction` - Users who haven't interacted with recent content
+- `inactive:DAYS` - Users who haven't posted in DAYS
+- `repost-ratio:RATIO` - Users whose posts are mostly reposts
 
 ### Key Patterns
 
@@ -36,6 +53,8 @@ This is a CLI tool for analyzing Bilibili following lists. It identifies users w
 **Relationship Attributes**: Following status uses attribute codes (2 = one-way follow, 6 = mutual follow).
 
 **Rate Limiting**: All API calls go through `_rate_limit()` with configurable delay to avoid throttling.
+
+**Caching**: `FilterContext` caches user stats and activity data to minimize redundant API calls when multiple filters need the same data.
 
 ## Code Style
 

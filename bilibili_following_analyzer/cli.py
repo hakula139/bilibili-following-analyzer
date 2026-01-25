@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
-from .analyzer import (
-    analyze_followings,
-    collect_interacting_users,
-    filter_inactive_users,
-)
 from .client import BilibiliClient
-from .models import FilterConfig
-from .utils import load_allow_list, print_results
+from .filters import (
+    Filter,
+    FilterContext,
+    FilterResult,
+    Following,
+    get_filter_help,
+    parse_filter_spec,
+)
+from .utils import load_allow_list, print_filter_results
 
 
 def _env_int(name: str, default: int) -> int:
@@ -79,6 +84,41 @@ def _env_float(name: str, default: float) -> float:
         raise SystemExit(f'Error: {name} must be a valid number, got {val!r}') from None
 
 
+def _env_list(name: str) -> list[str]:
+    """
+    Get a list from an environment variable (comma-separated).
+
+    Parameters
+    ----------
+    name : str
+        The environment variable name.
+
+    Returns
+    -------
+    list[str]
+        List of values, or empty list if not set.
+    """
+    val = os.environ.get(name)
+    if not val:
+        return []
+    return [v.strip() for v in val.split(',') if v.strip()]
+
+
+class FilterHelpAction(argparse.Action):
+    """Custom action to display filter help and exit."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        del parser, namespace, values, option_string  # Unused
+        print(get_filter_help())
+        sys.exit(0)
+
+
 def parse_args() -> argparse.Namespace:
     """
     Parse command-line arguments.
@@ -86,92 +126,211 @@ def parse_args() -> argparse.Namespace:
     Returns
     -------
     argparse.Namespace
-        Parsed arguments with fields: mid, sessdata, follower_threshold,
-        num_videos, num_dynamics, allow_list, delay.
+        Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Analyze your Bilibili following list',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description='Analyze your Bilibili following list with composable filters',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Use --list-filters to see all available filters and their syntax.',
     )
 
     parser.add_argument(
         '--mid',
         type=int,
         default=os.environ.get('MID'),
-        help='Your Bilibili user ID (UID)',
+        help='Your Bilibili user ID (UID). Env: MID',
     )
     parser.add_argument(
         '--sessdata',
         type=str,
         default=os.environ.get('SESSDATA'),
-        help='SESSDATA cookie for authentication (required for some features)',
-    )
-    parser.add_argument(
-        '--follower-threshold',
-        type=int,
-        default=_env_int('FOLLOWER_THRESHOLD', 5000),
-        help='Only report non-followers with fewer than this many followers',
-    )
-    parser.add_argument(
-        '--num-videos',
-        type=int,
-        default=_env_int('NUM_VIDEOS', 10),
-        help='Number of recent videos to check for interactions',
-    )
-    parser.add_argument(
-        '--num-dynamics',
-        type=int,
-        default=_env_int('NUM_DYNAMICS', 20),
-        help='Number of recent dynamics to check for interactions',
+        help='SESSDATA cookie for authentication. Env: SESSDATA',
     )
     parser.add_argument(
         '--allow-list',
         type=Path,
         default=os.environ.get('ALLOW_LIST'),
-        help='Path to allow list file (one UID per line)',
+        help='Path to allow list file (one UID per line). Env: ALLOW_LIST',
     )
     parser.add_argument(
         '--delay',
         type=float,
         default=_env_float('DELAY', 0.3),
-        help='Delay between API requests (seconds)',
+        help='Delay between API requests in seconds (default: 0.3). Env: DELAY',
     )
 
-    # Filter options (all optional - only enabled if specified)
+    # Filter arguments
     filter_group = parser.add_argument_group(
-        'filtering options',
-        'Optional filters for the no-interaction list. Only enabled if specified.',
+        'filter options',
+        'Specify filters to apply. Use --list-filters for available options.',
     )
     filter_group.add_argument(
-        '--filter-max-following',
+        '-f',
+        '--filter',
+        action='append',
+        dest='filters',
+        metavar='FILTER',
+        help='Add a filter (repeatable). Format: name / name:param. Env: FILTERS',
+    )
+    filter_group.add_argument(
+        '--filter-mode',
+        choices=['and', 'or'],
+        default=os.environ.get('FILTER_MODE', 'and'),
+        help='How to combine filters: and (all match) / or (any). Env: FILTER_MODE',
+    )
+    filter_group.add_argument(
+        '--list-filters',
+        nargs=0,
+        action=FilterHelpAction,
+        help='List all available filters and exit',
+    )
+
+    # Interaction collection (for no-interaction filter)
+    interaction_group = parser.add_argument_group(
+        'interaction options',
+        'Settings for the no-interaction filter.',
+    )
+    interaction_group.add_argument(
+        '--num-videos',
         type=int,
-        default=os.environ.get('FILTER_MAX_FOLLOWING'),
-        metavar='N',
-        help='Filter users following more than N accounts (e.g., 3000)',
+        default=_env_int('NUM_VIDEOS', 10),
+        help='Number of recent videos to check for interactions. Env: NUM_VIDEOS',
     )
-    filter_group.add_argument(
-        '--filter-inactive-days',
+    interaction_group.add_argument(
+        '--num-dynamics',
         type=int,
-        default=os.environ.get('FILTER_INACTIVE_DAYS'),
-        metavar='DAYS',
-        help='Filter users who have not posted in DAYS (e.g., 365)',
-    )
-    filter_group.add_argument(
-        '--filter-repost-ratio',
-        type=float,
-        default=os.environ.get('FILTER_REPOST_RATIO'),
-        metavar='RATIO',
-        help='Filter users whose repost ratio exceeds RATIO (0.0-1.0, e.g., 0.8)',
-    )
-    filter_group.add_argument(
-        '--filter-dynamics-count',
-        type=int,
-        default=_env_int('FILTER_DYNAMICS_COUNT', 10),
-        metavar='N',
-        help='Number of recent dynamics to check for filtering (default: 10)',
+        default=_env_int('NUM_DYNAMICS', 20),
+        help='Number of recent dynamics to check for interactions. Env: NUM_DYNAMICS',
     )
 
     return parser.parse_args()
+
+
+def collect_interacting_users(
+    client: BilibiliClient,
+    my_mid: int,
+    num_videos: int,
+    num_dynamics: int,
+) -> set[int]:
+    """
+    Collect all user IDs who interacted with recent posts.
+
+    Parameters
+    ----------
+    client : BilibiliClient
+        The authenticated API client.
+    my_mid : int
+        The user's own member ID.
+    num_videos : int
+        Number of recent videos to check.
+    num_dynamics : int
+        Number of recent dynamics to check.
+
+    Returns
+    -------
+    set[int]
+        Set of user IDs who have interacted.
+    """
+    from .client import BilibiliAPIError
+
+    interacting_users: set[int] = set()
+
+    # Collect from videos
+    if num_videos > 0:
+        print(f'Fetching recent {num_videos} videos...')
+        video_count = 0
+        for video in client.get_user_videos(my_mid, max_count=num_videos):
+            aid = video['aid']
+            title = video['title'][:30]
+            print(f'  Checking video: {title}...')
+
+            for comment in client.get_video_comments(aid, max_count=100):
+                interacting_users.add(comment['member']['mid'])
+
+            video_count += 1
+
+        print(f'  Processed {video_count} videos')
+
+    # Collect from dynamics
+    if num_dynamics > 0:
+        print(f'Fetching recent {num_dynamics} dynamics...')
+        dynamic_count = 0
+        for dynamic in client.get_user_dynamics(my_mid, max_count=num_dynamics):
+            dynamic_id = dynamic['id_str']
+            dynamic_type = dynamic.get('type', 'unknown')
+            print(f'  Checking dynamic {dynamic_id} ({dynamic_type})...')
+
+            # Get likes and forwards
+            for reaction in client.get_dynamic_reactions(dynamic_id):
+                interacting_users.add(reaction['mid'])
+
+            # Get comments (some dynamic types don't support comments)
+            try:
+                for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
+                    interacting_users.add(comment['member']['mid'])
+            except BilibiliAPIError as e:
+                if e.code == -404:
+                    pass  # Dynamic has no comment section
+                else:
+                    raise
+
+            dynamic_count += 1
+
+        print(f'  Processed {dynamic_count} dynamics')
+
+    return interacting_users
+
+
+def apply_filters(
+    followings: list[Following],
+    filters: list[Filter],
+    ctx: FilterContext,
+    mode: str,
+) -> list[FilterResult]:
+    """
+    Apply filters to a list of followings.
+
+    Parameters
+    ----------
+    followings : list[Following]
+        The users to filter.
+    filters : list[Filter]
+        The filters to apply.
+    ctx : FilterContext
+        Shared context for filter evaluation.
+    mode : str
+        'and' (all filters must match) or 'or' (any filter matches).
+
+    Returns
+    -------
+    list[FilterResult]
+        Results for users who matched the filter criteria.
+    """
+    results: list[FilterResult] = []
+
+    print(f'Applying {len(filters)} filter(s) in {mode.upper()} mode...')
+
+    for following in followings:
+        result = FilterResult(following=following)
+
+        for f in filters:
+            matched, detail = f.matches(following, ctx)
+            if matched:
+                result.add_match(f.name, detail)
+
+        # Determine if this user should be included in results
+        if mode == 'and':
+            # All filters must match
+            if len(result.matched_filters) == len(filters):
+                results.append(result)
+        else:  # mode == 'or'
+            # Any filter matches
+            if result.matched_filters:
+                results.append(result)
+
+    print(f'  Found {len(results)} matching users')
+
+    return results
 
 
 def main() -> None:
@@ -186,50 +345,73 @@ def main() -> None:
     if not args.mid:
         raise SystemExit('Error: --mid is required (or set MID in .env)')
 
+    # Collect filters from args and environment
+    filter_specs: list[str] = args.filters or []
+    env_filters = _env_list('FILTERS')
+    filter_specs.extend(env_filters)
+
+    if not filter_specs:
+        raise SystemExit(
+            'Error: At least one filter is required. '
+            'Use --list-filters to see options.\n'
+            'Example: -f not-following-back -f below-followers:5000'
+        )
+
+    # Parse filter specs into Filter instances
+    filters: list[Filter] = []
+    for spec in filter_specs:
+        try:
+            filters.append(parse_filter_spec(spec))
+        except ValueError as e:
+            raise SystemExit(f'Error: {e}') from None
+
+    filter_names = ', '.join(f.name for f in filters)
+    print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
+
     # Load allow list
     allow_list = load_allow_list(args.allow_list)
     if allow_list:
         print(f'Loaded {len(allow_list)} users in allow list')
 
-    # Build filter config from args
-    filter_config = FilterConfig(
-        max_following=args.filter_max_following,
-        inactive_days=args.filter_inactive_days,
-        repost_ratio=args.filter_repost_ratio,
-        dynamics_to_check=args.filter_dynamics_count,
-    )
+    # Check if we need to collect interactions (for no-interaction filter)
+    needs_interactions = any(f.name == 'no-interaction' for f in filters)
 
     # Initialize client with context manager for proper cleanup
     with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
-        # Collect interacting users
-        total_posts = args.num_videos + args.num_dynamics
-        interacting_users: set[int]
-        if total_posts > 0:
-            interacting_users = collect_interacting_users(
-                client,
-                args.mid,
-                args.num_videos,
-                args.num_dynamics,
-            )
-            print(f'\nFound {len(interacting_users)} unique users who interacted')
-        else:
-            interacting_users = set()
+        # Collect interacting users if needed
+        interacting_users: set[int] = set()
+        if needs_interactions:
+            total_posts = args.num_videos + args.num_dynamics
+            if total_posts > 0:
+                interacting_users = collect_interacting_users(
+                    client,
+                    args.mid,
+                    args.num_videos,
+                    args.num_dynamics,
+                )
+                print(f'\nFound {len(interacting_users)} unique users who interacted')
 
-        # Analyze followings
-        not_following_back, no_interaction = analyze_followings(
-            client,
-            args.mid,
-            allow_list,
-            args.follower_threshold,
-            interacting_users,
+        # Build filter context
+        ctx = FilterContext(
+            client=client,
+            my_mid=args.mid,
+            interacting_users=interacting_users,
         )
 
-        # Apply filters to no_interaction list if any filters are enabled
-        filtered_users = None
-        if filter_config.is_enabled():
-            no_interaction, filtered_users = filter_inactive_users(
-                client, no_interaction, filter_config
+        # Fetch all followings
+        print('Fetching followings...')
+        followings: list[Following] = []
+        for f in client.get_followings(args.mid):
+            mid = int(f['mid'])
+            if mid in allow_list:
+                continue
+            followings.append(
+                Following(mid=mid, name=f['uname'], attribute=f['attribute'])
             )
+        print(f'  Found {len(followings)} followings (after allow list)')
+
+        # Apply filters
+        results = apply_filters(followings, filters, ctx, args.filter_mode)
 
     # Print results
-    print_results(not_following_back, no_interaction, filtered_users)
+    print_filter_results(results)
