@@ -165,6 +165,31 @@ class Filter(ABC):
     param_help: ClassVar[str] = ''
 
     @classmethod
+    def _require_param(cls, param: str | None) -> str:
+        """Validate that a parameter is provided."""
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        return param
+
+    @classmethod
+    def _parse_int_param(cls, param: str | None) -> int:
+        """Parse and validate an integer parameter."""
+        param = cls._require_param(param)
+        try:
+            return int(param)
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
+
+    @classmethod
+    def _parse_float_param(cls, param: str | None) -> float:
+        """Parse and validate a float parameter."""
+        param = cls._require_param(param)
+        try:
+            return float(param)
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires a number') from None
+
+    @classmethod
     def create(cls, param: str | None = None) -> Filter:
         """
         Factory method to create a filter instance.
@@ -248,64 +273,61 @@ class MutualFollowFilter(Filter):
         return False, None
 
 
-class BelowFollowersFilter(Filter):
+class _ThresholdStatFilter(Filter):
+    """
+    Base class for filters that compare a user stat against a threshold.
+
+    Subclasses must define class attributes for configuration.
+    """
+
+    has_param = True
+
+    # Subclass configuration (to be overridden)
+    stat_field: ClassVar[str]  # 'follower' or 'following'
+    compare_above: ClassVar[bool]  # True for '>' comparison, False for '<'
+    detail_prefix: ClassVar[str]  # Display prefix like '粉丝数' or '关注数'
+
+    def __init__(self, threshold: int) -> None:
+        self.threshold = threshold
+
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        return cls(cls._parse_int_param(param))
+
+    def matches(
+        self, following: Following, ctx: FilterContext
+    ) -> tuple[bool, str | None]:
+        stat = ctx.get_user_stat(following.mid)
+        value = stat.get(self.stat_field, 0)
+        if self.compare_above:
+            matched = value > self.threshold
+        else:
+            matched = value < self.threshold
+        if matched:
+            return True, f'{self.detail_prefix} {value}'
+        return False, None
+
+
+class BelowFollowersFilter(_ThresholdStatFilter):
     """Filter users with fewer than N followers."""
 
     name = 'below-followers'
     description = 'Users with fewer than N followers'
-    has_param = True
     param_help = 'N (follower threshold)'
-
-    def __init__(self, threshold: int) -> None:
-        self.threshold = threshold
-
-    @classmethod
-    def create(cls, param: str | None = None) -> Filter:
-        if param is None:
-            raise ValueError(f'Filter {cls.name!r} requires a parameter')
-        try:
-            return cls(int(param))
-        except ValueError:
-            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
-
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
-        stat = ctx.get_user_stat(following.mid)
-        follower_count = stat.get('follower', 0)
-        if follower_count < self.threshold:
-            return True, f'粉丝数 {follower_count}'
-        return False, None
+    stat_field = 'follower'
+    compare_above = False
+    detail_prefix = '粉丝数'
 
 
-class AboveFollowersFilter(Filter):
+class AboveFollowersFilter(_ThresholdStatFilter):
     """Filter users with more than N followers."""
 
     name = 'above-followers'
     description = 'Users with more than N followers'
-    has_param = True
     param_help = 'N (follower threshold)'
-
-    def __init__(self, threshold: int) -> None:
-        self.threshold = threshold
-
-    @classmethod
-    def create(cls, param: str | None = None) -> Filter:
-        if param is None:
-            raise ValueError(f'Filter {cls.name!r} requires a parameter')
-        try:
-            return cls(int(param))
-        except ValueError:
-            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
-
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
-        stat = ctx.get_user_stat(following.mid)
-        follower_count = stat.get('follower', 0)
-        if follower_count > self.threshold:
-            return True, f'粉丝数 {follower_count}'
-        return False, None
+    stat_field = 'follower'
+    compare_above = True
+    detail_prefix = '粉丝数'
 
 
 class NoInteractionFilter(Filter):
@@ -322,34 +344,15 @@ class NoInteractionFilter(Filter):
         return False, None
 
 
-class TooManyFollowingsFilter(Filter):
+class TooManyFollowingsFilter(_ThresholdStatFilter):
     """Filter users who follow too many accounts."""
 
     name = 'too-many-followings'
     description = 'Users following more than N accounts'
-    has_param = True
     param_help = 'N (following threshold)'
-
-    def __init__(self, threshold: int) -> None:
-        self.threshold = threshold
-
-    @classmethod
-    def create(cls, param: str | None = None) -> Filter:
-        if param is None:
-            raise ValueError(f'Filter {cls.name!r} requires a parameter')
-        try:
-            return cls(int(param))
-        except ValueError:
-            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
-
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
-        stat = ctx.get_user_stat(following.mid)
-        following_count = stat.get('following', 0)
-        if following_count > self.threshold:
-            return True, f'关注数 {following_count}'
-        return False, None
+    stat_field = 'following'
+    compare_above = True
+    detail_prefix = '关注数'
 
 
 class InactiveFilter(Filter):
@@ -365,12 +368,7 @@ class InactiveFilter(Filter):
 
     @classmethod
     def create(cls, param: str | None = None) -> Filter:
-        if param is None:
-            raise ValueError(f'Filter {cls.name!r} requires a parameter')
-        try:
-            return cls(int(param))
-        except ValueError:
-            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
+        return cls(cls._parse_int_param(param))
 
     def matches(
         self, following: Following, ctx: FilterContext
@@ -405,12 +403,7 @@ class RepostRatioFilter(Filter):
 
     @classmethod
     def create(cls, param: str | None = None) -> Filter:
-        if param is None:
-            raise ValueError(f'Filter {cls.name!r} requires a parameter')
-        try:
-            return cls(float(param))
-        except ValueError:
-            raise ValueError(f'Filter {cls.name!r} requires a float') from None
+        return cls(cls._parse_float_param(param))
 
     def matches(
         self, following: Following, ctx: FilterContext

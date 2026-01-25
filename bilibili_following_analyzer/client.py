@@ -126,6 +126,11 @@ class BilibiliClient:
         """Apply rate limiting delay between requests."""
         time.sleep(self.delay)
 
+    @staticmethod
+    def _extract_key_from_url(url: str) -> str:
+        """Extract the filename (without extension) from a URL path."""
+        return url.rsplit('/', 1)[1].split('.')[0]
+
     def _get_wbi_keys(self) -> tuple[str, str]:
         """
         Fetch WBI keys from nav API.
@@ -162,13 +167,10 @@ class BilibiliClient:
         if not img_url or not sub_url:
             raise BilibiliAPIError(-1, 'WBI keys not found in API response')
 
-        img_key = img_url.rsplit('/', 1)[1].split('.')[0]
-        sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
+        self._img_key = self._extract_key_from_url(img_url)
+        self._sub_key = self._extract_key_from_url(sub_url)
 
-        self._img_key = img_key
-        self._sub_key = sub_key
-
-        return img_key, sub_key
+        return self._img_key, self._sub_key
 
     def _sign_wbi(self, params: dict[str, Any]) -> dict[str, str]:
         """
@@ -443,6 +445,44 @@ class BilibiliClient:
     # Dynamic APIs
     # --------------------------------------------------------------------------
 
+    def _iterate_offset_paginated(
+        self,
+        url: str,
+        base_params: dict[str, Any],
+        max_count: int | None = None,
+        *,
+        wbi: bool = False,
+    ) -> Iterator[dict[str, Any]]:
+        """
+        Iterate over offset-paginated API results.
+
+        Common pattern for dynamic-related APIs that use offset + has_more pagination.
+        """
+        offset = None
+        count = 0
+
+        while True:
+            params = dict(base_params)
+            if offset:
+                params['offset'] = offset
+
+            data = self._get(url, params, wbi=wbi)
+            items: list[dict[str, Any]] = data.get('data', {}).get('items') or []
+
+            if not items:
+                break
+
+            for item in items:
+                yield item
+                count += 1
+                if max_count and count >= max_count:
+                    return
+
+            if data.get('data', {}).get('has_more'):
+                offset = data['data'].get('offset')
+            else:
+                break
+
     def get_user_dynamics(
         self, mid: int, max_count: int | None = None
     ) -> Iterator[dict[str, Any]]:
@@ -462,30 +502,9 @@ class BilibiliClient:
             Dynamic info including id_str, type, modules, etc.
         """
         url = 'https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space'
-        offset = None
-        count = 0
-
-        while True:
-            params = {'host_mid': mid}
-            if offset:
-                params['offset'] = offset
-
-            data = self._get(url, params, wbi=True)
-            items = data.get('data', {}).get('items', [])
-
-            if not items:
-                break
-
-            for item in items:
-                yield item
-                count += 1
-                if max_count and count >= max_count:
-                    return
-
-            if data.get('data', {}).get('has_more'):
-                offset = data['data'].get('offset')
-            else:
-                break
+        yield from self._iterate_offset_paginated(
+            url, {'host_mid': mid}, max_count, wbi=True
+        )
 
     def get_dynamic_reactions(
         self, dynamic_id: str, max_count: int | None = None
@@ -508,30 +527,7 @@ class BilibiliClient:
             Reaction info including mid, type, etc.
         """
         url = 'https://api.bilibili.com/x/polymer/web-dynamic/v1/detail/reaction'
-        offset = None
-        count = 0
-
-        while True:
-            params = {'id': dynamic_id}
-            if offset:
-                params['offset'] = offset
-
-            data = self._get(url, params)
-            items: list[dict[str, Any]] = data.get('data', {}).get('items') or []
-
-            if not items:
-                break
-
-            for item in items:
-                yield item
-                count += 1
-                if max_count and count >= max_count:
-                    return
-
-            if data.get('data', {}).get('has_more'):
-                offset = data['data'].get('offset')
-            else:
-                break
+        yield from self._iterate_offset_paginated(url, {'id': dynamic_id}, max_count)
 
     def get_dynamic_comments(
         self, dynamic_id: str, page_size: int = 20, max_count: int | None = None

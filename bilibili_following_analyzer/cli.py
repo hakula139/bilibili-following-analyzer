@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from dotenv import load_dotenv
 
@@ -24,65 +24,52 @@ from .filters import (
 from .utils import load_allow_list, print_filter_results
 
 
-def _env_int(name: str, default: int) -> int:
+T = TypeVar('T')
+
+
+def _env_parse(name: str, default: T, parser: Callable[[str], T], type_name: str) -> T:
     """
-    Get an integer from an environment variable with a default.
+    Parse an environment variable with a type converter.
 
     Parameters
     ----------
     name : str
         The environment variable name.
-    default : int
+    default : T
         The default value if the variable is not set or empty.
+    parser : Callable[[str], T]
+        Function to convert string to the desired type.
+    type_name : str
+        Human-readable type name for error messages.
 
     Returns
     -------
-    int
-        The parsed integer value.
+    T
+        The parsed value.
 
     Raises
     ------
     SystemExit
-        If the value is set but not a valid integer.
+        If the value is set but cannot be parsed.
     """
     val = os.environ.get(name)
     if not val:
         return default
     try:
-        return int(val)
+        return parser(val)
     except ValueError:
-        msg = f'Error: {name} must be a valid integer, got {val!r}'
+        msg = f'Error: {name} must be a valid {type_name}, got {val!r}'
         raise SystemExit(msg) from None
 
 
+def _env_int(name: str, default: int) -> int:
+    """Get an integer from an environment variable with a default."""
+    return _env_parse(name, default, int, 'integer')
+
+
 def _env_float(name: str, default: float) -> float:
-    """
-    Get a float from an environment variable with a default.
-
-    Parameters
-    ----------
-    name : str
-        The environment variable name.
-    default : float
-        The default value if the variable is not set or empty.
-
-    Returns
-    -------
-    float
-        The parsed float value.
-
-    Raises
-    ------
-    SystemExit
-        If the value is set but not a valid float.
-    """
-    val = os.environ.get(name)
-    if not val:
-        return default
-    try:
-        return float(val)
-    except ValueError:
-        raise SystemExit(f'Error: {name} must be a valid number, got {val!r}') from None
+    """Get a float from an environment variable with a default."""
+    return _env_parse(name, default, float, 'number')
 
 
 def _env_list(name: str) -> list[str]:
@@ -228,6 +215,89 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _collect_video_interactions(
+    client: BilibiliClient,
+    mid: int,
+    num_videos: int,
+    users: set[int],
+) -> None:
+    """
+    Collect user IDs from video comments.
+
+    Parameters
+    ----------
+    client : BilibiliClient
+        The authenticated API client.
+    mid : int
+        The user's member ID whose videos to check.
+    num_videos : int
+        Number of recent videos to check.
+    users : set[int]
+        Set to add interacting user IDs to (modified in place).
+    """
+    print(f'Fetching recent {num_videos} videos...')
+    video_count = 0
+    for video in client.get_user_videos(mid, max_count=num_videos):
+        aid = video['aid']
+        title = video['title'][:30]
+        print(f'  Checking video: {title}...')
+
+        for comment in client.get_video_comments(aid, max_count=100):
+            users.add(comment['member']['mid'])
+
+        video_count += 1
+
+    print(f'  Processed {video_count} videos')
+
+
+def _collect_dynamic_interactions(
+    client: BilibiliClient,
+    mid: int,
+    num_dynamics: int,
+    users: set[int],
+) -> None:
+    """
+    Collect user IDs from dynamic reactions and comments.
+
+    Parameters
+    ----------
+    client : BilibiliClient
+        The authenticated API client.
+    mid : int
+        The user's member ID whose dynamics to check.
+    num_dynamics : int
+        Number of recent dynamics to check.
+    users : set[int]
+        Set to add interacting user IDs to (modified in place).
+    """
+    from .client import BilibiliAPIError
+
+    print(f'Fetching recent {num_dynamics} dynamics...')
+    dynamic_count = 0
+    for dynamic in client.get_user_dynamics(mid, max_count=num_dynamics):
+        dynamic_id = dynamic['id_str']
+        dynamic_type = dynamic.get('type', 'unknown')
+        print(f'  Checking dynamic {dynamic_id} ({dynamic_type})...')
+
+        # Get likes and forwards
+        for reaction in client.get_dynamic_reactions(dynamic_id):
+            users.add(reaction['mid'])
+
+        # Get comments (some dynamic types don't support comments)
+        try:
+            for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
+                users.add(comment['member']['mid'])
+        except BilibiliAPIError as e:
+            if e.code == -404:
+                pass  # Dynamic has no comment section
+            else:
+                raise
+
+        dynamic_count += 1
+
+    print(f'  Processed {dynamic_count} dynamics')
+
+
 def collect_interacting_users(
     client: BilibiliClient,
     my_mid: int,
@@ -253,52 +323,13 @@ def collect_interacting_users(
     set[int]
         Set of user IDs who have interacted.
     """
-    from .client import BilibiliAPIError
-
     interacting_users: set[int] = set()
 
-    # Collect from videos
     if num_videos > 0:
-        print(f'Fetching recent {num_videos} videos...')
-        video_count = 0
-        for video in client.get_user_videos(my_mid, max_count=num_videos):
-            aid = video['aid']
-            title = video['title'][:30]
-            print(f'  Checking video: {title}...')
+        _collect_video_interactions(client, my_mid, num_videos, interacting_users)
 
-            for comment in client.get_video_comments(aid, max_count=100):
-                interacting_users.add(comment['member']['mid'])
-
-            video_count += 1
-
-        print(f'  Processed {video_count} videos')
-
-    # Collect from dynamics
     if num_dynamics > 0:
-        print(f'Fetching recent {num_dynamics} dynamics...')
-        dynamic_count = 0
-        for dynamic in client.get_user_dynamics(my_mid, max_count=num_dynamics):
-            dynamic_id = dynamic['id_str']
-            dynamic_type = dynamic.get('type', 'unknown')
-            print(f'  Checking dynamic {dynamic_id} ({dynamic_type})...')
-
-            # Get likes and forwards
-            for reaction in client.get_dynamic_reactions(dynamic_id):
-                interacting_users.add(reaction['mid'])
-
-            # Get comments (some dynamic types don't support comments)
-            try:
-                for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
-                    interacting_users.add(comment['member']['mid'])
-            except BilibiliAPIError as e:
-                if e.code == -404:
-                    pass  # Dynamic has no comment section
-                else:
-                    raise
-
-            dynamic_count += 1
-
-        print(f'  Processed {dynamic_count} dynamics')
+        _collect_dynamic_interactions(client, my_mid, num_dynamics, interacting_users)
 
     return interacting_users
 
@@ -355,6 +386,106 @@ def apply_filters(
     return results
 
 
+def _collect_filter_specs(args: argparse.Namespace) -> list[str]:
+    """Collect filter specs from args and environment."""
+    filter_specs: list[str] = args.filters or []
+    env_filters = _env_list('FILTERS')
+    filter_specs.extend(env_filters)
+
+    if not filter_specs:
+        raise SystemExit(
+            'Error: At least one filter is required. '
+            'Use --list-filters to see options.\n'
+            'Example: -f not-following-back -f below-followers:5000'
+        )
+
+    return filter_specs
+
+
+def _parse_filters(filter_specs: list[str]) -> list[Filter]:
+    """Parse filter specifications into Filter instances."""
+    filters: list[Filter] = []
+    for spec in filter_specs:
+        try:
+            filters.append(parse_filter_spec(spec))
+        except ValueError as e:
+            raise SystemExit(f'Error: {e}') from None
+    return filters
+
+
+def _setup_cache(args: argparse.Namespace) -> CachedDataFetcher:
+    """Initialize disk cache based on arguments."""
+    if args.no_cache:
+        print('Disk cache: disabled')
+        return CachedDataFetcher(cache=None)
+
+    disk_cache = get_cache(args.cache_dir)
+    cache_fetcher = CachedDataFetcher(cache=disk_cache)
+    cache_dir = args.cache_dir or get_cache_dir()
+    print(f'Disk cache: {cache_dir}')
+
+    if args.clear_cache:
+        cache_fetcher.clear()
+        print('  Cache cleared')
+
+    return cache_fetcher
+
+
+def _fetch_followings(
+    client: BilibiliClient,
+    mid: int,
+    allow_list: set[int],
+) -> list[Following]:
+    """Fetch followings and filter by allow list."""
+    print('Fetching followings...')
+    followings: list[Following] = []
+    for f in client.get_followings(mid):
+        user_mid = int(f['mid'])
+        if user_mid in allow_list:
+            continue
+        followings.append(
+            Following(mid=user_mid, name=f['uname'], attribute=f['attribute'])
+        )
+    print(f'  Found {len(followings)} followings (after allow list)')
+    return followings
+
+
+def _run_analysis(
+    args: argparse.Namespace,
+    filters: list[Filter],
+    cache_fetcher: CachedDataFetcher,
+    allow_list: set[int],
+) -> list[FilterResult]:
+    """Run the main analysis with the API client."""
+    needs_interactions = any(f.name == 'no-interaction' for f in filters)
+
+    with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
+        # Collect interacting users if needed
+        interacting_users: set[int] = set()
+        if needs_interactions:
+            total_posts = args.num_videos + args.num_dynamics
+            if total_posts > 0:
+                interacting_users = collect_interacting_users(
+                    client,
+                    args.mid,
+                    args.num_videos,
+                    args.num_dynamics,
+                )
+                print(f'\nFound {len(interacting_users)} unique users who interacted')
+
+        # Build filter context
+        ctx = FilterContext(
+            client=client,
+            my_mid=args.mid,
+            interacting_users=interacting_users,
+            cache=cache_fetcher,
+        )
+
+        # Fetch followings and apply filters
+        followings = _fetch_followings(client, args.mid, allow_list)
+        return apply_filters(followings, filters, ctx, args.filter_mode)
+
+
 def main() -> None:
     """
     Main entry point for the CLI.
@@ -367,94 +498,20 @@ def main() -> None:
     if not args.mid:
         raise SystemExit('Error: --mid is required (or set MID in .env)')
 
-    # Collect filters from args and environment
-    filter_specs: list[str] = args.filters or []
-    env_filters = _env_list('FILTERS')
-    filter_specs.extend(env_filters)
-
-    if not filter_specs:
-        raise SystemExit(
-            'Error: At least one filter is required. '
-            'Use --list-filters to see options.\n'
-            'Example: -f not-following-back -f below-followers:5000'
-        )
-
-    # Parse filter specs into Filter instances
-    filters: list[Filter] = []
-    for spec in filter_specs:
-        try:
-            filters.append(parse_filter_spec(spec))
-        except ValueError as e:
-            raise SystemExit(f'Error: {e}') from None
-
+    # Parse and validate filters
+    filter_specs = _collect_filter_specs(args)
+    filters = _parse_filters(filter_specs)
     filter_names = ', '.join(f.name for f in filters)
     print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
 
-    # Initialize disk cache
-    cache_fetcher: CachedDataFetcher
-    if args.no_cache:
-        print('Disk cache: disabled')
-        cache_fetcher = CachedDataFetcher(cache=None)
-    else:
-        disk_cache = get_cache(args.cache_dir)
-        cache_fetcher = CachedDataFetcher(cache=disk_cache)
-        cache_dir = args.cache_dir or get_cache_dir()
-        print(f'Disk cache: {cache_dir}')
-
-        if args.clear_cache:
-            cache_fetcher.clear()
-            print('  Cache cleared')
-
-    # Load allow list
+    # Initialize cache and load allow list
+    cache_fetcher = _setup_cache(args)
     allow_list = load_allow_list(args.allow_list)
     if allow_list:
         print(f'Loaded {len(allow_list)} users in allow list')
 
-    # Check if we need to collect interactions (for no-interaction filter)
-    needs_interactions = any(f.name == 'no-interaction' for f in filters)
-
     try:
-        # Initialize client with context manager for proper cleanup
-        with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
-            # Collect interacting users if needed
-            interacting_users: set[int] = set()
-            if needs_interactions:
-                total_posts = args.num_videos + args.num_dynamics
-                if total_posts > 0:
-                    interacting_users = collect_interacting_users(
-                        client,
-                        args.mid,
-                        args.num_videos,
-                        args.num_dynamics,
-                    )
-                    print(
-                        f'\nFound {len(interacting_users)} unique users who interacted'
-                    )
-
-            # Build filter context
-            ctx = FilterContext(
-                client=client,
-                my_mid=args.mid,
-                interacting_users=interacting_users,
-                cache=cache_fetcher,
-            )
-
-            # Fetch all followings
-            print('Fetching followings...')
-            followings: list[Following] = []
-            for f in client.get_followings(args.mid):
-                mid = int(f['mid'])
-                if mid in allow_list:
-                    continue
-                followings.append(
-                    Following(mid=mid, name=f['uname'], attribute=f['attribute'])
-                )
-            print(f'  Found {len(followings)} followings (after allow list)')
-
-            # Apply filters
-            results = apply_filters(followings, filters, ctx, args.filter_mode)
-
-        # Print results
+        results = _run_analysis(args, filters, cache_fetcher, allow_list)
         print_filter_results(results)
     finally:
         cache_fetcher.close()
