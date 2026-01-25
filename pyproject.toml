@@ -6,15 +6,34 @@ requires-python = ">=3.10"
 dependencies    = ["python-dotenv>=1.0", "requests>=2.28"]
 
 [project.scripts]
-bilibili-analyzer = "check:main"
+bilibili-analyzer = "bilibili_following_analyzer.cli:main"
 
 [build-system]
 requires      = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages     = ["."]
-only-include = ["check.py"]
+packages = ["bilibili_following_analyzer"]
 
 [tool.uv]
 python-preference = "system"
+
+[tool.ruff]
+target-version = "py310"
+line-length    = 88
+
+[tool.ruff.format]
+indent-style              = "space"
+quote-style               = "single"
+line-ending               = "lf"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "I", "SIM", "UP", "W"]
+ignore = []
+
+[tool.ruff.lint.isort]
+lines-after-imports     = 2
+split-on-trailing-comma = true
+combine-as-imports      = true
+force-single-line       = false

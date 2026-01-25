@@ -33,13 +33,17 @@ All options can be set via `.env` or CLI arguments. CLI arguments override `.env
 ## Usage
 
 ```bash
-uv run check.py [OPTIONS]
+# Using the CLI entry point
+uv run bilibili-analyzer [OPTIONS]
+
+# Or as a Python module
+uv run python -m bilibili_following_analyzer [OPTIONS]
 ```
 
 Or if installed with pip:
 
 ```bash
-python check.py [OPTIONS]
+bilibili-analyzer [OPTIONS]
 ```
 
 ### Options
@@ -59,19 +63,19 @@ python check.py [OPTIONS]
 Basic check (with `.env` configured):
 
 ```bash
-uv run check.py
+uv run bilibili-analyzer
 ```
 
 Override threshold via CLI:
 
 ```bash
-uv run check.py --follower-threshold 10000
+uv run bilibili-analyzer --follower-threshold 10000
 ```
 
 With allow list to skip certain users:
 
 ```bash
-uv run check.py --allow-list allow_list.txt
+uv run bilibili-analyzer --allow-list allow_list.txt
 ```
 
 ### Allow List Format
