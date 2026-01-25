@@ -25,8 +25,8 @@ This is a CLI tool for analyzing Bilibili following lists. It identifies users w
 
 - **`cli.py`** - Entry point, argument parsing, orchestrates the analysis workflow
 - **`client.py`** - `BilibiliClient` class with WBI signature support for authenticated API requests
-- **`analyzer.py`** - Core analysis logic: `collect_interacting_users()` and `analyze_followings()`
-- **`models.py`** - `User` dataclass
+- **`analyzer.py`** - Core analysis logic: `collect_interacting_users()`, `analyze_followings()`, and `filter_inactive_users()`
+- **`models.py`** - `User`, `FilterConfig`, and `FilteredUser` dataclasses
 - **`utils.py`** - Allow list loading and result formatting
 
 ### Key Patterns
@@ -43,3 +43,7 @@ This is a CLI tool for analyzing Bilibili following lists. It identifies users w
 - Ruff for linting (see `pyproject.toml` for config)
 - Single quotes for strings
 - Python 3.10+ type annotations
+
+## External References
+
+- **Bilibili API Documentation**: [SocialSisterYi/bilibili-API-collect - GitHub](https://github.com/SocialSisterYi/bilibili-API-collect)

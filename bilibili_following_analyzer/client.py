@@ -556,3 +556,66 @@ class BilibiliClient:
         yield from self._get_comments(
             dynamic_id, type_=17, page_size=page_size, max_count=max_count
         )
+
+    def get_user_activity(self, mid: int, max_dynamics: int = 10) -> dict[str, Any]:
+        """
+        Get user activity info for filtering purposes.
+
+        Fetches dynamics and stats to determine user activity level.
+
+        Parameters
+        ----------
+        mid : int
+            The user's member ID.
+        max_dynamics : int, optional
+            Maximum number of dynamics to fetch for analysis. Default is 10.
+
+        Returns
+        -------
+        dict[str, Any]
+            Activity info with keys:
+            - following_count: int, number of users they follow
+            - is_deactivated: bool, True if account is deactivated
+            - total_dynamics: int, number of dynamics fetched (up to max_dynamics)
+            - repost_count: int, number of repost-only dynamics
+            - last_post_ts: int or None, timestamp of most recent dynamic
+        """
+        result: dict[str, Any] = {
+            'following_count': 0,
+            'is_deactivated': False,
+            'total_dynamics': 0,
+            'repost_count': 0,
+            'last_post_ts': None,
+        }
+
+        # Get following count from user stat
+        stat = self.get_user_stat(mid)
+        result['following_count'] = stat.get('following', 0)
+
+        # Fetch dynamics to check activity
+        dynamics: list[dict[str, Any]] = []
+        try:
+            for dynamic in self.get_user_dynamics(mid, max_count=max_dynamics):
+                dynamics.append(dynamic)
+        except BilibiliAPIError:
+            # API error may indicate deactivated account or private space
+            result['is_deactivated'] = True
+            return result
+
+        result['total_dynamics'] = len(dynamics)
+
+        if not dynamics:
+            return result
+
+        # Check most recent post timestamp
+        first_dynamic = dynamics[0]
+        pub_ts = first_dynamic.get('modules', {}).get('module_author', {}).get('pub_ts')
+        result['last_post_ts'] = pub_ts
+
+        # Count reposts (type DYNAMIC_TYPE_FORWARD)
+        for dynamic in dynamics:
+            dynamic_type = dynamic.get('type', '')
+            if dynamic_type == 'DYNAMIC_TYPE_FORWARD':
+                result['repost_count'] += 1
+
+        return result

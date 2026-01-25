@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from .models import User
+    from .models import FilteredUser, User
 
 
 def load_allow_list(path: Path | None) -> set[int]:
@@ -42,6 +42,7 @@ def load_allow_list(path: Path | None) -> set[int]:
 def print_results(
     not_following_back: list[User],
     no_interaction: list[User],
+    filtered_users: list[FilteredUser] | None = None,
 ) -> None:
     """
     Print analysis results to stdout.
@@ -52,6 +53,8 @@ def print_results(
         Users who don't follow back and have few followers.
     no_interaction : list[User]
         Users who haven't interacted with recent posts.
+    filtered_users : list[FilteredUser] or None, optional
+        Users filtered out by activity criteria.
     """
     print('\n' + '=' * 60)
     print('RESULTS')
@@ -78,3 +81,11 @@ def print_results(
             print(f'{user.name}{suffix} - {user.space_url}')
     else:
         print('\n All followings have interacted with your recent posts!')
+
+    if filtered_users:
+        print(f'\n FILTERED (inactive/low-engagement) ({len(filtered_users)} users):')
+        print('-' * 40)
+        for fu in filtered_users:
+            reasons_str = ', '.join(fu.reasons)
+            print(f'{fu.user.name} - {fu.user.space_url}')
+            print(f'  Reason: {reasons_str}')

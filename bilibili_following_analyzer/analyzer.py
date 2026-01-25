@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from .client import BilibiliAPIError
-from .models import User
+from .models import FilterConfig, FilteredUser, User
 
 
 if TYPE_CHECKING:
@@ -155,3 +156,79 @@ def analyze_followings(
                 )
 
     return not_following_back, no_interaction
+
+
+def filter_inactive_users(
+    client: BilibiliClient,
+    users: list[User],
+    config: FilterConfig,
+) -> tuple[list[User], list[FilteredUser]]:
+    """
+    Filter users based on activity criteria.
+
+    Parameters
+    ----------
+    client : BilibiliClient
+        The authenticated API client.
+    users : list[User]
+        List of users to filter.
+    config : FilterConfig
+        Filter configuration with enabled criteria.
+
+    Returns
+    -------
+    tuple[list[User], list[FilteredUser]]
+        A tuple of (kept_users, filtered_users).
+        - kept_users: Users who passed all filters
+        - filtered_users: Users who matched at least one filter criterion
+    """
+    if not config.is_enabled():
+        return users, []
+
+    kept: list[User] = []
+    filtered: list[FilteredUser] = []
+
+    now_ts = int(time.time())
+
+    print(f'Filtering {len(users)} users for activity...')
+
+    for user in users:
+        max_dynamics = config.dynamics_to_check
+        activity = client.get_user_activity(user.mid, max_dynamics=max_dynamics)
+        reasons: list[str] = []
+
+        # Check: deactivated account
+        if activity['is_deactivated']:
+            reasons.append('账号已注销或空间不可访问')
+
+        # Check: too many followings
+        if config.max_following is not None:
+            following_count = activity['following_count']
+            if following_count > config.max_following:
+                reasons.append(f'关注数过多 ({following_count})')
+
+        # Check: no posts at all
+        if activity['total_dynamics'] == 0 and not activity['is_deactivated']:
+            reasons.append('无任何动态')
+
+        # Check: inactive for too long
+        if config.inactive_days is not None and activity['last_post_ts'] is not None:
+            days_since_post = (now_ts - activity['last_post_ts']) // 86400
+            if days_since_post > config.inactive_days:
+                reasons.append(f'超过 {days_since_post} 天未发布动态')
+
+        # Check: mostly reposts
+        if config.repost_ratio is not None and activity['total_dynamics'] > 0:
+            ratio = activity['repost_count'] / activity['total_dynamics']
+            if ratio >= config.repost_ratio:
+                pct = int(ratio * 100)
+                reasons.append(f'近期动态 {pct}% 为转发')
+
+        if reasons:
+            filtered.append(FilteredUser(user=user, reasons=reasons))
+        else:
+            kept.append(user)
+
+    print(f'  Kept {len(kept)}, filtered {len(filtered)} users')
+
+    return kept, filtered

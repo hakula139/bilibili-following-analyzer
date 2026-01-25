@@ -8,8 +8,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .analyzer import analyze_followings, collect_interacting_users
+from .analyzer import (
+    analyze_followings,
+    collect_interacting_users,
+    filter_inactive_users,
+)
 from .client import BilibiliClient
+from .models import FilterConfig
 from .utils import load_allow_list, print_results
 
 
@@ -132,6 +137,40 @@ def parse_args() -> argparse.Namespace:
         help='Delay between API requests (seconds)',
     )
 
+    # Filter options (all optional - only enabled if specified)
+    filter_group = parser.add_argument_group(
+        'filtering options',
+        'Optional filters for the no-interaction list. Only enabled if specified.',
+    )
+    filter_group.add_argument(
+        '--filter-max-following',
+        type=int,
+        default=os.environ.get('FILTER_MAX_FOLLOWING'),
+        metavar='N',
+        help='Filter users following more than N accounts (e.g., 3000)',
+    )
+    filter_group.add_argument(
+        '--filter-inactive-days',
+        type=int,
+        default=os.environ.get('FILTER_INACTIVE_DAYS'),
+        metavar='DAYS',
+        help='Filter users who have not posted in DAYS (e.g., 365)',
+    )
+    filter_group.add_argument(
+        '--filter-repost-ratio',
+        type=float,
+        default=os.environ.get('FILTER_REPOST_RATIO'),
+        metavar='RATIO',
+        help='Filter users whose repost ratio exceeds RATIO (0.0-1.0, e.g., 0.8)',
+    )
+    filter_group.add_argument(
+        '--filter-dynamics-count',
+        type=int,
+        default=_env_int('FILTER_DYNAMICS_COUNT', 10),
+        metavar='N',
+        help='Number of recent dynamics to check for filtering (default: 10)',
+    )
+
     return parser.parse_args()
 
 
@@ -151,6 +190,14 @@ def main() -> None:
     allow_list = load_allow_list(args.allow_list)
     if allow_list:
         print(f'Loaded {len(allow_list)} users in allow list')
+
+    # Build filter config from args
+    filter_config = FilterConfig(
+        max_following=args.filter_max_following,
+        inactive_days=args.filter_inactive_days,
+        repost_ratio=args.filter_repost_ratio,
+        dynamics_to_check=args.filter_dynamics_count,
+    )
 
     # Initialize client with context manager for proper cleanup
     with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
@@ -177,5 +224,12 @@ def main() -> None:
             interacting_users,
         )
 
+        # Apply filters to no_interaction list if any filters are enabled
+        filtered_users = None
+        if filter_config.is_enabled():
+            no_interaction, filtered_users = filter_inactive_users(
+                client, no_interaction, filter_config
+            )
+
     # Print results
-    print_results(not_following_back, no_interaction)
+    print_results(not_following_back, no_interaction, filtered_users)
