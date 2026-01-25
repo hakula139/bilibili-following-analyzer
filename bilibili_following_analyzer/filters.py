@@ -8,6 +8,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from .cache import (
+    TTL_USER_ACTIVITY,
+    TTL_USER_STAT,
+    CachedDataFetcher,
+    make_user_activity_key,
+    make_user_stat_key,
+)
+
 
 if TYPE_CHECKING:
     from .client import BilibiliClient
@@ -19,6 +27,7 @@ class FilterContext:
     Shared context for filter evaluation.
 
     Contains data that filters may need, fetched once and shared across filters.
+    Supports both in-memory (session) and disk-based (cross-run) caching.
 
     Attributes
     ----------
@@ -28,31 +37,56 @@ class FilterContext:
         The user's own member ID.
     interacting_users : set[int]
         Set of user IDs who have interacted with recent content.
+    cache : CachedDataFetcher
+        Disk cache for persistent storage across runs.
     user_stats : dict[int, dict]
-        Cached user stats (follower/following counts) by mid.
+        In-memory cache for user stats (hot cache for current session).
     user_activity : dict[int, dict]
-        Cached user activity info by mid.
+        In-memory cache for user activity (hot cache for current session).
     """
 
     client: BilibiliClient
     my_mid: int
     interacting_users: set[int] = field(default_factory=set)
+    cache: CachedDataFetcher = field(default_factory=CachedDataFetcher)
     user_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
     user_activity: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def get_user_stat(self, mid: int) -> dict[str, Any]:
-        """Get user stat with caching."""
-        if mid not in self.user_stats:
-            self.user_stats[mid] = self.client.get_user_stat(mid)
-        return self.user_stats[mid]
+        """
+        Get user stat with two-level caching.
+
+        First checks in-memory cache, then disk cache, then fetches from API.
+        """
+        if mid in self.user_stats:
+            return self.user_stats[mid]
+
+        key = make_user_stat_key(mid)
+        stat = self.cache.get_or_fetch(
+            key,
+            lambda: self.client.get_user_stat(mid),
+            TTL_USER_STAT,
+        )
+        self.user_stats[mid] = stat
+        return stat
 
     def get_user_activity(self, mid: int, max_dynamics: int = 10) -> dict[str, Any]:
-        """Get user activity with caching."""
-        if mid not in self.user_activity:
-            self.user_activity[mid] = self.client.get_user_activity(
-                mid, max_dynamics=max_dynamics
-            )
-        return self.user_activity[mid]
+        """
+        Get user activity with two-level caching.
+
+        First checks in-memory cache, then disk cache, then fetches from API.
+        """
+        if mid in self.user_activity:
+            return self.user_activity[mid]
+
+        key = make_user_activity_key(mid)
+        activity = self.cache.get_or_fetch(
+            key,
+            lambda: self.client.get_user_activity(mid, max_dynamics=max_dynamics),
+            TTL_USER_ACTIVITY,
+        )
+        self.user_activity[mid] = activity
+        return activity
 
 
 @dataclass
@@ -130,6 +164,34 @@ class Filter(ABC):
     # Parameter description for help text (if has_param is True)
     param_help: ClassVar[str] = ''
 
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        """
+        Factory method to create a filter instance.
+
+        Parameters
+        ----------
+        param : str or None
+            Optional parameter string to parse.
+
+        Returns
+        -------
+        Filter
+            The instantiated filter.
+
+        Raises
+        ------
+        ValueError
+            If the parameter is invalid or missing when required.
+        """
+        if cls.has_param:
+            raise NotImplementedError(
+                f'{cls.__name__} must override create() to handle parameters'
+            )
+        if param is not None:
+            raise ValueError(f'Filter {cls.name!r} does not accept parameters')
+        return cls()
+
     @abstractmethod
     def matches(
         self, following: Following, ctx: FilterContext
@@ -197,6 +259,15 @@ class BelowFollowersFilter(Filter):
     def __init__(self, threshold: int) -> None:
         self.threshold = threshold
 
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        try:
+            return cls(int(param))
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
+
     def matches(
         self, following: Following, ctx: FilterContext
     ) -> tuple[bool, str | None]:
@@ -217,6 +288,15 @@ class AboveFollowersFilter(Filter):
 
     def __init__(self, threshold: int) -> None:
         self.threshold = threshold
+
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        try:
+            return cls(int(param))
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
 
     def matches(
         self, following: Following, ctx: FilterContext
@@ -253,6 +333,15 @@ class TooManyFollowingsFilter(Filter):
     def __init__(self, threshold: int) -> None:
         self.threshold = threshold
 
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        try:
+            return cls(int(param))
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
+
     def matches(
         self, following: Following, ctx: FilterContext
     ) -> tuple[bool, str | None]:
@@ -273,6 +362,15 @@ class InactiveFilter(Filter):
 
     def __init__(self, days: int) -> None:
         self.days = days
+
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        try:
+            return cls(int(param))
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires an integer') from None
 
     def matches(
         self, following: Following, ctx: FilterContext
@@ -304,6 +402,15 @@ class RepostRatioFilter(Filter):
 
     def __init__(self, ratio: float) -> None:
         self.ratio = ratio
+
+    @classmethod
+    def create(cls, param: str | None = None) -> Filter:
+        if param is None:
+            raise ValueError(f'Filter {cls.name!r} requires a parameter')
+        try:
+            return cls(float(param))
+        except ValueError:
+            raise ValueError(f'Filter {cls.name!r} requires a float') from None
 
     def matches(
         self, following: Following, ctx: FilterContext
@@ -404,37 +511,7 @@ def parse_filter_spec(spec: str) -> Filter:
         raise ValueError(f'Unknown filter: {name!r}. Available: {available}')
 
     filter_cls = FILTER_REGISTRY[name]
-
-    if filter_cls.has_param:
-        if param is None:
-            raise ValueError(f'Filter {name!r} requires a parameter: {name}:<value>')
-
-        # Determine parameter type from the filter class
-        if filter_cls in (
-            BelowFollowersFilter,
-            AboveFollowersFilter,
-            TooManyFollowingsFilter,
-            InactiveFilter,
-        ):
-            try:
-                return filter_cls(int(param))  # type: ignore[call-arg]
-            except ValueError:
-                raise ValueError(
-                    f'Filter {name!r} requires an integer parameter'
-                ) from None
-        elif filter_cls == RepostRatioFilter:
-            try:
-                return filter_cls(float(param))  # type: ignore[call-arg]
-            except ValueError:
-                raise ValueError(
-                    f'Filter {name!r} requires a float parameter'
-                ) from None
-        else:
-            raise ValueError(f'Unknown parameterized filter: {name!r}')
-    else:
-        if param is not None:
-            raise ValueError(f'Filter {name!r} does not accept parameters')
-        return filter_cls()  # type: ignore[call-arg]
+    return filter_cls.create(param)
 
 
 def get_filter_help() -> str:

@@ -26,6 +26,7 @@ This is a CLI tool for analyzing Bilibili following lists using composable filte
 - **`cli.py`** - Entry point, argument parsing, orchestrates the analysis workflow
 - **`client.py`** - `BilibiliClient` class with WBI signature support for authenticated API requests
 - **`filters.py`** - Composable filter system with `Filter` base class and concrete implementations
+- **`cache.py`** - Disk-based caching using `diskcache` for cross-run persistence
 - **`utils.py`** - Allow list loading and result formatting
 
 ### Filter System
@@ -54,7 +55,11 @@ Available filters (use `--list-filters` to see all):
 
 **Rate Limiting**: All API calls go through `_rate_limit()` with configurable delay to avoid throttling.
 
-**Caching**: `FilterContext` caches user stats and activity data to minimize redundant API calls when multiple filters need the same data.
+**Caching**: Two-level caching system:
+
+- In-memory cache (per-session): `FilterContext` keeps a hot cache for the current run
+- Disk cache (cross-run): `diskcache` persists data with TTLs (24h for user stats, 6h for activity)
+- Use `--no-cache` to disable disk caching, `--clear-cache` to invalidate
 
 ## Code Style
 

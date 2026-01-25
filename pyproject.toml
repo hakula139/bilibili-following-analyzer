@@ -1,12 +1,17 @@
 [project]
-name            = "bilibili-following-analyzer"
-version         = "0.1.0"
-description     = "Analyze your Bilibili following list to find inactive or non-mutual follows"
+name = "bilibili-following-analyzer"
+version = "0.1.0"
+description = "Analyze your Bilibili following list"
 requires-python = ">=3.10"
-dependencies    = ["python-dotenv>=1.0", "requests>=2.28"]
+dependencies = [
+    "diskcache>=5.6",
+    "platformdirs>=4.0",
+    "python-dotenv>=1.0",
+    "requests>=2.28",
+]
 
 [dependency-groups]
-dev = ["pre-commit>=4.5.1", "types-requests>=2.32.4.20260107"]
+dev = ["diskcache-stubs>=5.6", "pre-commit>=4.5.1", "types-requests>=2.32.4.20260107"]
 
 [project.scripts]
 bilibili-analyzer = "bilibili_following_analyzer.cli:main"

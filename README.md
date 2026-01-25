@@ -72,6 +72,9 @@ Use `--list-filters` to see all available filters:
 | `--num-dynamics` | `NUM_DYNAMICS` | 20      | Dynamics to check for interactions                      |
 | `--allow-list`   | `ALLOW_LIST`   | -       | Path to file with UIDs to skip (one per line)           |
 | `--delay`        | `DELAY`        | 0.3     | Delay between API requests (seconds)                    |
+| `--no-cache`     | -              | -       | Disable disk caching (in-memory only)                   |
+| `--clear-cache`  | -              | -       | Clear cached data before running                        |
+| `--cache-dir`    | -              | (auto)  | Custom cache directory                                  |
 
 ### Examples
 

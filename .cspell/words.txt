@@ -1,8 +1,11 @@
+basedpyright
 bilibili
 buvid
 dotenv
+isort
 khtml
 mypy
+platformdirs
 pyproject
 referer
 satsuki

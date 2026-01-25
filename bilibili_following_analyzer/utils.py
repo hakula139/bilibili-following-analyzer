@@ -64,7 +64,7 @@ def print_filter_results(results: list[FilterResult]) -> None:
         print(f'{user.name} - {user.space_url}')
 
         # Show matched filter details
-        details = []
+        details: list[str] = []
         for filter_name in result.matched_filters:
             detail = result.details.get(filter_name)
             if detail:

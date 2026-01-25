@@ -24,3 +24,6 @@ env/
 # User-specific data
 allow_list.txt
 .env
+
+# Local cache (if using --cache-dir .cache)
+.cache/

@@ -11,6 +11,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from .cache import CachedDataFetcher, get_cache, get_cache_dir
 from .client import BilibiliClient
 from .filters import (
     Filter,
@@ -203,6 +204,27 @@ def parse_args() -> argparse.Namespace:
         help='Number of recent dynamics to check for interactions. Env: NUM_DYNAMICS',
     )
 
+    # Cache options
+    cache_group = parser.add_argument_group(
+        'cache options',
+        'Control disk caching of API responses across runs.',
+    )
+    cache_group.add_argument(
+        '--no-cache',
+        action='store_true',
+        help='Disable disk caching (still uses in-memory cache for current run)',
+    )
+    cache_group.add_argument(
+        '--clear-cache',
+        action='store_true',
+        help='Clear all cached data before running',
+    )
+    cache_group.add_argument(
+        '--cache-dir',
+        type=Path,
+        help=f'Custom cache directory (default: {get_cache_dir()})',
+    )
+
     return parser.parse_args()
 
 
@@ -368,6 +390,21 @@ def main() -> None:
     filter_names = ', '.join(f.name for f in filters)
     print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
 
+    # Initialize disk cache
+    cache_fetcher: CachedDataFetcher
+    if args.no_cache:
+        print('Disk cache: disabled')
+        cache_fetcher = CachedDataFetcher(cache=None)
+    else:
+        disk_cache = get_cache(args.cache_dir)
+        cache_fetcher = CachedDataFetcher(cache=disk_cache)
+        cache_dir = args.cache_dir or get_cache_dir()
+        print(f'Disk cache: {cache_dir}')
+
+        if args.clear_cache:
+            cache_fetcher.clear()
+            print('  Cache cleared')
+
     # Load allow list
     allow_list = load_allow_list(args.allow_list)
     if allow_list:
@@ -376,42 +413,48 @@ def main() -> None:
     # Check if we need to collect interactions (for no-interaction filter)
     needs_interactions = any(f.name == 'no-interaction' for f in filters)
 
-    # Initialize client with context manager for proper cleanup
-    with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
-        # Collect interacting users if needed
-        interacting_users: set[int] = set()
-        if needs_interactions:
-            total_posts = args.num_videos + args.num_dynamics
-            if total_posts > 0:
-                interacting_users = collect_interacting_users(
-                    client,
-                    args.mid,
-                    args.num_videos,
-                    args.num_dynamics,
-                )
-                print(f'\nFound {len(interacting_users)} unique users who interacted')
+    try:
+        # Initialize client with context manager for proper cleanup
+        with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
+            # Collect interacting users if needed
+            interacting_users: set[int] = set()
+            if needs_interactions:
+                total_posts = args.num_videos + args.num_dynamics
+                if total_posts > 0:
+                    interacting_users = collect_interacting_users(
+                        client,
+                        args.mid,
+                        args.num_videos,
+                        args.num_dynamics,
+                    )
+                    print(
+                        f'\nFound {len(interacting_users)} unique users who interacted'
+                    )
 
-        # Build filter context
-        ctx = FilterContext(
-            client=client,
-            my_mid=args.mid,
-            interacting_users=interacting_users,
-        )
-
-        # Fetch all followings
-        print('Fetching followings...')
-        followings: list[Following] = []
-        for f in client.get_followings(args.mid):
-            mid = int(f['mid'])
-            if mid in allow_list:
-                continue
-            followings.append(
-                Following(mid=mid, name=f['uname'], attribute=f['attribute'])
+            # Build filter context
+            ctx = FilterContext(
+                client=client,
+                my_mid=args.mid,
+                interacting_users=interacting_users,
+                cache=cache_fetcher,
             )
-        print(f'  Found {len(followings)} followings (after allow list)')
 
-        # Apply filters
-        results = apply_filters(followings, filters, ctx, args.filter_mode)
+            # Fetch all followings
+            print('Fetching followings...')
+            followings: list[Following] = []
+            for f in client.get_followings(args.mid):
+                mid = int(f['mid'])
+                if mid in allow_list:
+                    continue
+                followings.append(
+                    Following(mid=mid, name=f['uname'], attribute=f['attribute'])
+                )
+            print(f'  Found {len(followings)} followings (after allow list)')
 
-    # Print results
-    print_filter_results(results)
+            # Apply filters
+            results = apply_filters(followings, filters, ctx, args.filter_mode)
+
+        # Print results
+        print_filter_results(results)
+    finally:
+        cache_fetcher.close()
