@@ -606,7 +606,8 @@ class BilibiliClient:
         # Check most recent post timestamp
         first_dynamic = dynamics[0]
         pub_ts = first_dynamic.get('modules', {}).get('module_author', {}).get('pub_ts')
-        result['last_post_ts'] = pub_ts
+        if pub_ts is not None:
+            result['last_post_ts'] = int(pub_ts)
 
         # Count reposts (type DYNAMIC_TYPE_FORWARD)
         for dynamic in dynamics:
