@@ -55,6 +55,8 @@ Available filters (use `--list-filters` to see all):
 
 **Rate Limiting**: All API calls go through `_rate_limit()` with configurable delay to avoid throttling.
 
+**Progress Bars**: Uses `tqdm` for progress indication during video/dynamic collection and filter evaluation. Use `--limit N` to test with only the first N followings.
+
 **Caching**: Two-level caching system:
 
 - In-memory cache (per-session): `FilterContext` keeps a hot cache for the current run

@@ -6,9 +6,12 @@ isort
 khtml
 mypy
 platformdirs
+pycache
 pyproject
 referer
 satsuki
 sessdata
+tqdm
+venv
 vlist
 vmid

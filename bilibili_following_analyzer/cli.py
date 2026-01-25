@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 from .cache import CachedDataFetcher, get_cache, get_cache_dir
 from .client import BilibiliClient
@@ -146,6 +147,12 @@ def parse_args() -> argparse.Namespace:
         default=_env_float('DELAY', 0.3),
         help='Delay between API requests in seconds (default: 0.3). Env: DELAY',
     )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=None,
+        help='Limit analysis to the first N followings (for testing)',
+    )
 
     # Filter arguments
     filter_group = parser.add_argument_group(
@@ -235,19 +242,11 @@ def _collect_video_interactions(
     users : set[int]
         Set to add interacting user IDs to (modified in place).
     """
-    print(f'Fetching recent {num_videos} videos...')
-    video_count = 0
-    for video in client.get_user_videos(mid, max_count=num_videos):
+    videos = list(client.get_user_videos(mid, max_count=num_videos))
+    for video in tqdm(videos, desc='Videos', unit='video'):
         aid = video['aid']
-        title = video['title'][:30]
-        print(f'  Checking video: {title}...')
-
         for comment in client.get_video_comments(aid, max_count=100):
             users.add(comment['member']['mid'])
-
-        video_count += 1
-
-    print(f'  Processed {video_count} videos')
 
 
 def _collect_dynamic_interactions(
@@ -272,12 +271,9 @@ def _collect_dynamic_interactions(
     """
     from .client import BilibiliAPIError
 
-    print(f'Fetching recent {num_dynamics} dynamics...')
-    dynamic_count = 0
-    for dynamic in client.get_user_dynamics(mid, max_count=num_dynamics):
+    dynamics = list(client.get_user_dynamics(mid, max_count=num_dynamics))
+    for dynamic in tqdm(dynamics, desc='Dynamics', unit='dyn'):
         dynamic_id = dynamic['id_str']
-        dynamic_type = dynamic.get('type', 'unknown')
-        print(f'  Checking dynamic {dynamic_id} ({dynamic_type})...')
 
         # Get likes and forwards
         for reaction in client.get_dynamic_reactions(dynamic_id):
@@ -292,10 +288,6 @@ def _collect_dynamic_interactions(
                 pass  # Dynamic has no comment section
             else:
                 raise
-
-        dynamic_count += 1
-
-    print(f'  Processed {dynamic_count} dynamics')
 
 
 def collect_interacting_users(
@@ -363,7 +355,7 @@ def apply_filters(
 
     print(f'Applying {len(filters)} filter(s) in {mode.upper()} mode...')
 
-    for following in followings:
+    for following in tqdm(followings, desc='Filtering', unit='user'):
         result = FilterResult(following=following)
 
         for f in filters:
@@ -435,6 +427,7 @@ def _fetch_followings(
     client: BilibiliClient,
     mid: int,
     allow_list: set[int],
+    limit: int | None = None,
 ) -> list[Following]:
     """Fetch followings and filter by allow list."""
     print('Fetching followings...')
@@ -446,6 +439,8 @@ def _fetch_followings(
         followings.append(
             Following(mid=user_mid, name=f['uname'], attribute=f['attribute'])
         )
+        if limit and len(followings) >= limit:
+            break
     print(f'  Found {len(followings)} followings (after allow list)')
     return followings
 
@@ -482,7 +477,7 @@ def _run_analysis(
         )
 
         # Fetch followings and apply filters
-        followings = _fetch_followings(client, args.mid, allow_list)
+        followings = _fetch_followings(client, args.mid, allow_list, args.limit)
         return apply_filters(followings, filters, ctx, args.filter_mode)
 
 
