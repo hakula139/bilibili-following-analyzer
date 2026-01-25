@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .client import BilibiliAPIError
 from .models import User
 
 
@@ -74,9 +75,15 @@ def collect_interacting_users(
             for reaction in client.get_dynamic_reactions(dynamic_id):
                 interacting_users.add(reaction['mid'])
 
-            # Get comments
-            for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
-                interacting_users.add(comment['member']['mid'])
+            # Get comments (some dynamic types don't support comments)
+            try:
+                for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
+                    interacting_users.add(comment['member']['mid'])
+            except BilibiliAPIError as e:
+                if e.code == -404:
+                    pass  # Dynamic has no comment section
+                else:
+                    raise
 
             dynamic_count += 1
 

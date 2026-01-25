@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--num-dynamics',
         type=int,
-        default=_env_int('NUM_DYNAMICS', 10),
+        default=_env_int('NUM_DYNAMICS', 20),
         help='Number of recent dynamics to check for interactions',
     )
     parser.add_argument(

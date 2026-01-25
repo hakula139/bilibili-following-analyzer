@@ -54,7 +54,7 @@ bilibili-analyzer [OPTIONS]
 | `--sessdata`           | `SESSDATA`           | -       | SESSDATA cookie for authenticated API calls         |
 | `--follower-threshold` | `FOLLOWER_THRESHOLD` | 5000    | Report non-followers below this follower count      |
 | `--num-videos`         | `NUM_VIDEOS`         | 10      | Number of recent videos to check for interactions   |
-| `--num-dynamics`       | `NUM_DYNAMICS`       | 10      | Number of recent dynamics to check for interactions |
+| `--num-dynamics`       | `NUM_DYNAMICS`       | 20      | Number of recent dynamics to check for interactions |
 | `--allow-list`         | `ALLOW_LIST`         | -       | Path to file with UIDs to skip (one per line)       |
 | `--delay`              | `DELAY`              | 0.3     | Delay between API requests (seconds)                |
 
