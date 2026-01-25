@@ -64,8 +64,7 @@ def print_results(
             suffix = (
                 f' ({user.follower_count} followers)' if user.follower_count else ''
             )
-            print(f'  {user.name}{suffix}')
-            print(f'    {user.space_url}')
+            print(f'{user.name}{suffix} - {user.space_url}')
     else:
         print('\n Everyone is following you back (or above follower threshold)!')
 
@@ -76,7 +75,6 @@ def print_results(
             suffix = ''
             if user.follower_count is not None:
                 suffix = f' ({user.follower_count} followers)'
-            print(f'  {user.name}{suffix}')
-            print(f'    {user.space_url}')
+            print(f'{user.name}{suffix} - {user.space_url}')
     else:
         print('\n All followings have interacted with your recent posts!')
