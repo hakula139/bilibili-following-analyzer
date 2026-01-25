@@ -91,6 +91,9 @@ class BilibiliClient:
         self._img_key: str | None = None
         self._sub_key: str | None = None
 
+        # Fetch buvid3 cookie by visiting the homepage (required for some APIs)
+        self.session.get('https://www.bilibili.com/')
+
     def _rate_limit(self) -> None:
         time.sleep(self.delay)
 
@@ -173,10 +176,10 @@ class BilibiliClient:
             yield from following_list
             pn += 1
 
-    def get_user_card(self, mid: int) -> dict[str, Any]:
-        """Get user card info including follower count."""
-        url = 'https://api.bilibili.com/x/web-interface/card'
-        return self._get(url, {'mid': mid})['data']
+    def get_user_stat(self, mid: int) -> dict[str, Any]:
+        """Get user relationship stats including follower count."""
+        url = 'https://api.bilibili.com/x/relation/stat'
+        return self._get(url, {'vmid': mid})['data']
 
     # --------------------------------------------------------------------------
     # Video APIs
@@ -251,7 +254,7 @@ class BilibiliClient:
             if offset:
                 params['offset'] = offset
 
-            data = self._get(url, params)
+            data = self._get(url, params, wbi=True)
             items = data.get('data', {}).get('items', [])
 
             if not items:
@@ -425,8 +428,8 @@ def analyze_followings(
                 no_interaction.append(User(mid=mid, name=name))
         else:
             # Not following back - check follower count
-            card = client.get_user_card(mid)
-            follower_count = card.get('follower', 0)
+            stat = client.get_user_stat(mid)
+            follower_count = stat.get('follower', 0)
 
             if follower_count < follower_threshold:
                 not_following_back.append(
