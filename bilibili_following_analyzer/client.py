@@ -27,9 +27,29 @@ MIXIN_KEY_ENC_TAB = [
 # fmt: on
 
 
+class BilibiliAPIError(Exception):
+    """
+    Exception raised when the Bilibili API returns an error.
+
+    Parameters
+    ----------
+    code : int
+        The error code from the API response.
+    message : str
+        The error message from the API response.
+    """
+
+    def __init__(self, code: int, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f'API error {code}: {message}')
+
+
 class BilibiliClient:
     """
     Client for Bilibili API with WBI signature support.
+
+    Can be used as a context manager for automatic resource cleanup.
 
     Parameters
     ----------
@@ -44,6 +64,11 @@ class BilibiliClient:
         The underlying HTTP session.
     delay : float
         Rate limiting delay between requests.
+
+    Examples
+    --------
+    >>> with BilibiliClient(sessdata='...') as client:
+    ...     stats = client.get_user_stat(12345)
     """
 
     BASE_HEADERS = {
@@ -87,6 +112,16 @@ class BilibiliClient:
         # Fetch buvid3 cookie by visiting the homepage (required for some APIs)
         self.session.get('https://www.bilibili.com/')
 
+    def __enter__(self) -> BilibiliClient:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        self.session.close()
+
     def _rate_limit(self) -> None:
         """Apply rate limiting delay between requests."""
         time.sleep(self.delay)
@@ -101,21 +136,39 @@ class BilibiliClient:
         -------
         tuple[str, str]
             The (img_key, sub_key) pair used for WBI signing.
+
+        Raises
+        ------
+        BilibiliAPIError
+            If the API returns an error or keys are missing.
         """
         if self._img_key and self._sub_key:
             return self._img_key, self._sub_key
 
         resp = self.session.get('https://api.bilibili.com/x/web-interface/nav')
         resp.raise_for_status()
-        data = resp.json()['data']
+        result = resp.json()
 
-        img_url: str = data['wbi_img']['img_url']
-        sub_url: str = data['wbi_img']['sub_url']
+        # Validate API response
+        code = result.get('code', -1)
+        if code != 0:
+            raise BilibiliAPIError(code, result.get('message', 'Unknown error'))
 
-        self._img_key = img_url.rsplit('/', 1)[1].split('.')[0]
-        self._sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
+        data = result.get('data', {})
+        wbi_img = data.get('wbi_img', {})
+        img_url = wbi_img.get('img_url')
+        sub_url = wbi_img.get('sub_url')
 
-        return self._img_key, self._sub_key
+        if not img_url or not sub_url:
+            raise BilibiliAPIError(-1, 'WBI keys not found in API response')
+
+        img_key = img_url.rsplit('/', 1)[1].split('.')[0]
+        sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
+
+        self._img_key = img_key
+        self._sub_key = sub_key
+
+        return img_key, sub_key
 
     def _sign_wbi(self, params: dict[str, Any]) -> dict[str, str]:
         """
@@ -151,7 +204,12 @@ class BilibiliClient:
         return signed
 
     def _get(
-        self, url: str, params: dict[str, Any] | None = None, *, wbi: bool = False
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wbi: bool = False,
+        check_code: bool = True,
     ) -> dict[str, Any]:
         """
         Make a GET request with optional WBI signing.
@@ -164,6 +222,8 @@ class BilibiliClient:
             Query parameters for the request.
         wbi : bool, optional
             Whether to apply WBI signing. Default is False.
+        check_code : bool, optional
+            Whether to check the API response code. Default is True.
 
         Returns
         -------
@@ -173,7 +233,9 @@ class BilibiliClient:
         Raises
         ------
         requests.HTTPError
-            If the request fails.
+            If the HTTP request fails.
+        BilibiliAPIError
+            If the API returns an error code (when check_code is True).
         """
         self._rate_limit()
 
@@ -185,7 +247,69 @@ class BilibiliClient:
 
         resp = self.session.get(url, params=params)
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+
+        if check_code:
+            code = result.get('code')
+            if code is not None and code != 0:
+                raise BilibiliAPIError(code, result.get('message', 'Unknown error'))
+
+        return result
+
+    def _get_comments(
+        self,
+        oid: int | str,
+        type_: int,
+        page_size: int = 20,
+        max_count: int | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """
+        Iterate over comments for a given object (video or dynamic).
+
+        Parameters
+        ----------
+        oid : int or str
+            The object ID (aid for videos, dynamic_id for dynamics).
+        type_ : int
+            The comment type (1 for videos, 17 for dynamics).
+        page_size : int, optional
+            Number of results per page. Default is 20.
+        max_count : int or None, optional
+            Maximum number of comments to return. None for unlimited.
+
+        Yields
+        ------
+        dict[str, Any]
+            Comment info including member.mid, content, ctime, etc.
+        """
+        url = 'https://api.bilibili.com/x/v2/reply/wbi/main'
+        next_offset = None
+        count = 0
+
+        while True:
+            params: dict[str, Any] = {
+                'oid': oid,
+                'type': type_,
+                'mode': 3,
+                'ps': page_size,
+            }
+            if next_offset:
+                params['next'] = next_offset
+
+            data = self._get(url, params, wbi=True)
+            cursor = data.get('data', {}).get('cursor', {})
+            replies: list[dict[str, Any]] = data.get('data', {}).get('replies') or []
+
+            for reply in replies:
+                yield reply
+                count += 1
+                if max_count and count >= max_count:
+                    return
+
+            if not cursor.get('is_end', True):
+                next_offset = cursor.get('next')
+            else:
+                break
 
     # --------------------------------------------------------------------------
     # Following / Relationship APIs
@@ -236,9 +360,14 @@ class BilibiliClient:
         -------
         dict[str, Any]
             Stats dict with keys: mid, following, whisper, black, follower.
+            Returns default values if the API returns no data.
         """
         url = 'https://api.bilibili.com/x/relation/stat'
-        return self._get(url, {'vmid': mid})['data']
+        result = self._get(url, {'vmid': mid})
+        data = result.get('data')
+        if data is None:
+            return {'mid': mid, 'follower': 0, 'following': 0}
+        return data
 
     # --------------------------------------------------------------------------
     # Video APIs
@@ -302,31 +431,11 @@ class BilibiliClient:
         Yields
         ------
         dict[str, Any]
-            Comment info including mid, content, ctime, etc.
+            Comment info including member.mid, content, ctime, etc.
         """
-        url = 'https://api.bilibili.com/x/v2/reply/wbi/main'
-        next_offset = None
-        count = 0
-
-        while True:
-            params: dict[str, Any] = {'oid': aid, 'type': 1, 'mode': 3, 'ps': page_size}
-            if next_offset:
-                params['next'] = next_offset
-
-            data = self._get(url, params, wbi=True)
-            cursor = data.get('data', {}).get('cursor', {})
-            replies: list[dict[str, Any]] = data.get('data', {}).get('replies') or []
-
-            for reply in replies:
-                yield reply
-                count += 1
-                if max_count and count >= max_count:
-                    return
-
-            if not cursor.get('is_end', True):
-                next_offset = cursor.get('next')
-            else:
-                break
+        yield from self._get_comments(
+            aid, type_=1, page_size=page_size, max_count=max_count
+        )
 
     # --------------------------------------------------------------------------
     # Dynamic APIs
@@ -376,7 +485,9 @@ class BilibiliClient:
             else:
                 break
 
-    def get_dynamic_reactions(self, dynamic_id: str) -> Iterator[dict[str, Any]]:
+    def get_dynamic_reactions(
+        self, dynamic_id: str, max_count: int | None = None
+    ) -> Iterator[dict[str, Any]]:
         """
         Get users who liked/forwarded a dynamic.
 
@@ -386,6 +497,8 @@ class BilibiliClient:
         ----------
         dynamic_id : str
             The dynamic's ID string.
+        max_count : int or None, optional
+            Maximum number of reactions to return. None for unlimited.
 
         Yields
         ------
@@ -394,6 +507,7 @@ class BilibiliClient:
         """
         url = 'https://api.bilibili.com/x/polymer/web-dynamic/v1/detail/reaction'
         offset = None
+        count = 0
 
         while True:
             params = {'id': dynamic_id}
@@ -406,7 +520,11 @@ class BilibiliClient:
             if not items:
                 break
 
-            yield from items
+            for item in items:
+                yield item
+                count += 1
+                if max_count and count >= max_count:
+                    return
 
             if data.get('data', {}).get('has_more'):
                 offset = data['data'].get('offset')
@@ -431,33 +549,8 @@ class BilibiliClient:
         Yields
         ------
         dict[str, Any]
-            Comment info including mid, content, ctime, etc.
+            Comment info including member.mid, content, ctime, etc.
         """
-        url = 'https://api.bilibili.com/x/v2/reply/wbi/main'
-        next_offset = None
-        count = 0
-
-        while True:
-            params: dict[str, Any] = {
-                'oid': dynamic_id,
-                'type': 17,
-                'mode': 3,
-                'ps': page_size,
-            }
-            if next_offset:
-                params['next'] = next_offset
-
-            data = self._get(url, params, wbi=True)
-            cursor = data.get('data', {}).get('cursor', {})
-            replies: list[dict[str, Any]] = data.get('data', {}).get('replies') or []
-
-            for reply in replies:
-                yield reply
-                count += 1
-                if max_count and count >= max_count:
-                    return
-
-            if not cursor.get('is_end', True):
-                next_offset = cursor.get('next')
-            else:
-                break
+        yield from self._get_comments(
+            dynamic_id, type_=17, page_size=page_size, max_count=max_count
+        )

@@ -11,6 +11,11 @@ if TYPE_CHECKING:
     from .client import BilibiliClient
 
 
+# Bilibili relationship attribute values
+ATTRIBUTE_FOLLOWING = 2  # Following only (not mutual)
+ATTRIBUTE_MUTUAL = 6  # Mutual follow
+
+
 def collect_interacting_users(
     client: BilibiliClient,
     my_mid: int,
@@ -50,7 +55,7 @@ def collect_interacting_users(
             print(f'  Checking video: {title}...')
 
             for comment in client.get_video_comments(aid, max_count=100):
-                interacting_users.add(comment['mid'])
+                interacting_users.add(comment['member']['mid'])
 
             video_count += 1
 
@@ -71,7 +76,7 @@ def collect_interacting_users(
 
             # Get comments
             for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
-                interacting_users.add(comment['mid'])
+                interacting_users.add(comment['member']['mid'])
 
             dynamic_count += 1
 
@@ -118,7 +123,7 @@ def analyze_followings(
     for following in client.get_followings(my_mid):
         mid = int(following['mid'])
         name = following['uname']
-        is_mutual = following['attribute'] == 6
+        is_mutual = following['attribute'] == ATTRIBUTE_MUTUAL
 
         if mid in allow_list:
             continue

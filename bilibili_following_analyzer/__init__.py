@@ -6,10 +6,12 @@ A tool to analyze your Bilibili following list and find:
 2. Users who haven't interacted with your recent posts
 """
 
+from importlib.metadata import version
+
 from .cli import main
-from .client import BilibiliClient
+from .client import BilibiliAPIError, BilibiliClient
 from .models import User
 
 
-__version__ = '0.1.0'
-__all__ = ['BilibiliClient', 'User', 'main', '__version__']
+__version__ = version('bilibili-following-analyzer')
+__all__ = ['BilibiliAPIError', 'BilibiliClient', 'User', 'main', '__version__']

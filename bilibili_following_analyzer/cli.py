@@ -13,6 +13,67 @@ from .client import BilibiliClient
 from .utils import load_allow_list, print_results
 
 
+def _env_int(name: str, default: int) -> int:
+    """
+    Get an integer from an environment variable with a default.
+
+    Parameters
+    ----------
+    name : str
+        The environment variable name.
+    default : int
+        The default value if the variable is not set or empty.
+
+    Returns
+    -------
+    int
+        The parsed integer value.
+
+    Raises
+    ------
+    SystemExit
+        If the value is set but not a valid integer.
+    """
+    val = os.environ.get(name)
+    if not val:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        msg = f'Error: {name} must be a valid integer, got {val!r}'
+        raise SystemExit(msg) from None
+
+
+def _env_float(name: str, default: float) -> float:
+    """
+    Get a float from an environment variable with a default.
+
+    Parameters
+    ----------
+    name : str
+        The environment variable name.
+    default : float
+        The default value if the variable is not set or empty.
+
+    Returns
+    -------
+    float
+        The parsed float value.
+
+    Raises
+    ------
+    SystemExit
+        If the value is set but not a valid float.
+    """
+    val = os.environ.get(name)
+    if not val:
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        raise SystemExit(f'Error: {name} must be a valid number, got {val!r}') from None
+
+
 def parse_args() -> argparse.Namespace:
     """
     Parse command-line arguments.
@@ -43,19 +104,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--follower-threshold',
         type=int,
-        default=int(os.environ.get('FOLLOWER_THRESHOLD', 5000)),
+        default=_env_int('FOLLOWER_THRESHOLD', 5000),
         help='Only report non-followers with fewer than this many followers',
     )
     parser.add_argument(
         '--num-videos',
         type=int,
-        default=int(os.environ.get('NUM_VIDEOS', 10)),
+        default=_env_int('NUM_VIDEOS', 10),
         help='Number of recent videos to check for interactions',
     )
     parser.add_argument(
         '--num-dynamics',
         type=int,
-        default=int(os.environ.get('NUM_DYNAMICS', 10)),
+        default=_env_int('NUM_DYNAMICS', 10),
         help='Number of recent dynamics to check for interactions',
     )
     parser.add_argument(
@@ -67,7 +128,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--delay',
         type=float,
-        default=float(os.environ.get('DELAY', 0.3)),
+        default=_env_float('DELAY', 0.3),
         help='Delay between API requests (seconds)',
     )
 
@@ -91,30 +152,30 @@ def main() -> None:
     if allow_list:
         print(f'Loaded {len(allow_list)} users in allow list')
 
-    # Initialize client
-    client = BilibiliClient(sessdata=args.sessdata, delay=args.delay)
+    # Initialize client with context manager for proper cleanup
+    with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
+        # Collect interacting users
+        total_posts = args.num_videos + args.num_dynamics
+        interacting_users: set[int]
+        if total_posts > 0:
+            interacting_users = collect_interacting_users(
+                client,
+                args.mid,
+                args.num_videos,
+                args.num_dynamics,
+            )
+            print(f'\nFound {len(interacting_users)} unique users who interacted')
+        else:
+            interacting_users = set()
 
-    # Collect interacting users
-    total_posts = args.num_videos + args.num_dynamics
-    if total_posts > 0:
-        interacting_users = collect_interacting_users(
+        # Analyze followings
+        not_following_back, no_interaction = analyze_followings(
             client,
             args.mid,
-            args.num_videos,
-            args.num_dynamics,
+            allow_list,
+            args.follower_threshold,
+            interacting_users,
         )
-        print(f'\nFound {len(interacting_users)} unique users who interacted')
-    else:
-        interacting_users: set[int] = set()
-
-    # Analyze followings
-    not_following_back, no_interaction = analyze_followings(
-        client,
-        args.mid,
-        allow_list,
-        args.follower_threshold,
-        interacting_users,
-    )
 
     # Print results
     print_results(not_following_back, no_interaction)

@@ -28,10 +28,13 @@ def load_allow_list(path: Path | None) -> set[int]:
         return set()
 
     allow_list: set[int] = set()
-    for line in path.read_text().splitlines():
+    for line_num, line in enumerate(path.read_text().splitlines(), start=1):
         line = line.split('#')[0].strip()
         if line:
-            allow_list.add(int(line))
+            try:
+                allow_list.add(int(line))
+            except ValueError:
+                print(f'Warning: Invalid UID at {path}:{line_num}, skipping: {line!r}')
 
     return allow_list
 
