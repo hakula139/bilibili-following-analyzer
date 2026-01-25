@@ -452,6 +452,63 @@ class NoPostsFilter(Filter):
 
 
 # -----------------------------------------------------------------------------
+# Composite Filters for Nested Logic
+# -----------------------------------------------------------------------------
+
+
+class AndFilter(Filter):
+    """
+    Composite filter that requires ALL child filters to match.
+
+    Used for building complex filter expressions with nested logic.
+    """
+
+    name = 'and'
+    description = 'All child filters must match'
+
+    def __init__(self, filters: list[Filter]) -> None:
+        self.filters = filters
+
+    def matches(
+        self, following: Following, ctx: FilterContext
+    ) -> tuple[bool, str | None]:
+        details: list[str] = []
+        for f in self.filters:
+            matched, detail = f.matches(following, ctx)
+            if not matched:
+                return False, None
+            if detail:
+                details.append(detail)
+        return True, '; '.join(details) if details else None
+
+
+class OrFilter(Filter):
+    """
+    Composite filter that requires ANY child filter to match.
+
+    Used for building complex filter expressions with nested logic.
+    """
+
+    name = 'or'
+    description = 'Any child filter matches'
+
+    def __init__(self, filters: list[Filter]) -> None:
+        self.filters = filters
+
+    def matches(
+        self, following: Following, ctx: FilterContext
+    ) -> tuple[bool, str | None]:
+        all_details: list[str] = []
+        for f in self.filters:
+            matched, detail = f.matches(following, ctx)
+            if matched and detail:
+                all_details.append(detail)
+        if all_details:
+            return True, '; '.join(all_details)
+        return False, None
+
+
+# -----------------------------------------------------------------------------
 # Filter Registry
 # -----------------------------------------------------------------------------
 
@@ -517,3 +574,160 @@ def get_filter_help() -> str:
             lines.append(f'  {f.name}')
         lines.append(f'      {f.description}')
     return '\n'.join(lines)
+
+
+# -----------------------------------------------------------------------------
+# Filter Expression Parser
+# -----------------------------------------------------------------------------
+
+
+class FilterExpressionParser:
+    """
+    Parser for complex filter expressions with nested AND/OR logic.
+
+    Syntax
+    ------
+    - Filter names: `not-following-back`, `inactive:365`
+    - AND: `+` (e.g., `a + b`)
+    - OR: `|` (e.g., `a | b`)
+    - Grouping: `(...)` (e.g., `(a + b) | c`)
+
+    Precedence: `+` binds tighter than `|`, so `a + b | c` = `(a + b) | c`.
+
+    Examples
+    --------
+    - `not-following-back + below-followers:5000`
+    - `(a + b) | (c + d)`
+    - `(a + b + (c | d | e)) | f`
+    """
+
+    def __init__(self, expr: str) -> None:
+        self.expr = expr
+        self.pos = 0
+        self.length = len(expr)
+
+    def parse(self) -> Filter:
+        """Parse the expression and return a Filter."""
+        result = self._parse_or()
+        self._skip_whitespace()
+        if self.pos < self.length:
+            raise ValueError(
+                f'Unexpected character at position {self.pos}: {self.expr[self.pos]!r}'
+            )
+        return result
+
+    def _skip_whitespace(self) -> None:
+        while self.pos < self.length and self.expr[self.pos] in ' \t\n':
+            self.pos += 1
+
+    def _parse_or(self) -> Filter:
+        """Parse OR expressions (lowest precedence)."""
+        left = self._parse_and()
+        filters = [left]
+
+        while True:
+            self._skip_whitespace()
+            if self.pos < self.length and self.expr[self.pos] == '|':
+                self.pos += 1
+                filters.append(self._parse_and())
+            else:
+                break
+
+        if len(filters) == 1:
+            return filters[0]
+        return OrFilter(filters)
+
+    def _parse_and(self) -> Filter:
+        """Parse AND expressions (higher precedence than OR)."""
+        left = self._parse_atom()
+        filters = [left]
+
+        while True:
+            self._skip_whitespace()
+            if self.pos < self.length and self.expr[self.pos] == '+':
+                self.pos += 1
+                filters.append(self._parse_atom())
+            else:
+                break
+
+        if len(filters) == 1:
+            return filters[0]
+        return AndFilter(filters)
+
+    def _parse_atom(self) -> Filter:
+        """Parse atomic expressions (filter names or parenthesized groups)."""
+        self._skip_whitespace()
+
+        if self.pos >= self.length:
+            raise ValueError('Unexpected end of expression')
+
+        # Parenthesized group
+        if self.expr[self.pos] == '(':
+            self.pos += 1
+            result = self._parse_or()
+            self._skip_whitespace()
+            if self.pos >= self.length or self.expr[self.pos] != ')':
+                raise ValueError('Missing closing parenthesis')
+            self.pos += 1
+            return result
+
+        # Filter name (with optional parameter)
+        return self._parse_filter_name()
+
+    def _parse_filter_name(self) -> Filter:
+        """Parse a filter name like 'inactive:365' or 'not-following-back'."""
+        self._skip_whitespace()
+        start = self.pos
+
+        # Read filter name (letters and hyphens)
+        while self.pos < self.length and (
+            self.expr[self.pos].isalpha()
+            or self.expr[self.pos] == '-'
+            or self.expr[self.pos].isdigit()
+        ):
+            self.pos += 1
+
+        name = self.expr[start : self.pos]
+        if not name:
+            raise ValueError(f'Expected filter name at position {start}')
+
+        # Check for parameter
+        param = None
+        if self.pos < self.length and self.expr[self.pos] == ':':
+            self.pos += 1
+            param_start = self.pos
+            # Read parameter (anything until whitespace or operator)
+            while self.pos < self.length and self.expr[self.pos] not in ' \t\n+|()':
+                self.pos += 1
+            param = self.expr[param_start : self.pos]
+
+        # Look up and create filter
+        if name not in FILTER_REGISTRY:
+            available = ', '.join(sorted(FILTER_REGISTRY.keys()))
+            raise ValueError(f'Unknown filter: {name!r}. Available: {available}')
+
+        return FILTER_REGISTRY[name].create(param)
+
+
+def parse_filter_expression(expr: str) -> Filter:
+    """
+    Parse a filter expression string into a composite Filter.
+
+    Parameters
+    ----------
+    expr : str
+        Filter expression with AND (+), OR (|), and parentheses.
+        Example: `(not-following-back + below-followers:5000) | deactivated`
+
+    Returns
+    -------
+    Filter
+        The composite filter representing the expression.
+
+    Raises
+    ------
+    ValueError
+        If the expression syntax is invalid.
+    """
+    parser = FilterExpressionParser(expr)
+    return parser.parse()

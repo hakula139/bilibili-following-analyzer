@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -74,3 +76,62 @@ def print_filter_results(results: list[FilterResult]) -> None:
 
         if details:
             print(f'  └─ {", ".join(details)}')
+
+
+def _result_to_dict(result: FilterResult) -> dict[str, object]:
+    """Convert a FilterResult to a dictionary for serialization."""
+    details: list[str] = []
+    for filter_name in result.matched_filters:
+        detail = result.details.get(filter_name)
+        details.append(detail if detail else filter_name)
+
+    return {
+        'mid': result.following.mid,
+        'name': result.following.name,
+        'space_url': result.following.space_url,
+        'is_mutual': result.following.is_mutual,
+        'matched_filters': result.matched_filters,
+        'details': details,
+    }
+
+
+def output_results_to_file(results: list[FilterResult], path: Path) -> None:
+    """
+    Output filter results to a file.
+
+    Parameters
+    ----------
+    results : list[FilterResult]
+        The filter results to output.
+    path : Path
+        Output file path. Format determined by extension (.txt, .json, .csv).
+    """
+    suffix = path.suffix.lower()
+
+    if suffix == '.json':
+        data = [_result_to_dict(r) for r in results]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    elif suffix == '.csv':
+        with path.open('w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['mid', 'name', 'space_url', 'is_mutual', 'details'])
+            for r in results:
+                details = ', '.join(r.details.get(fn) or fn for fn in r.matched_filters)
+                writer.writerow(
+                    [
+                        r.following.mid,
+                        r.following.name,
+                        r.following.space_url,
+                        r.following.is_mutual,
+                        details,
+                    ]
+                )
+    else:
+        # Default to plain text
+        lines: list[str] = []
+        for r in results:
+            details = ', '.join(r.details.get(fn) or fn for fn in r.matched_filters)
+            lines.append(f'{r.following.name}\t{r.following.space_url}\t{details}')
+        path.write_text('\n'.join(lines), encoding='utf-8')
+
+    print(f'Results saved to: {path}')

@@ -34,9 +34,11 @@ This is a CLI tool for analyzing Bilibili following lists using composable filte
 The filter system uses a composable design pattern:
 
 - **`Filter`** - Abstract base class defining the filter interface
+- **`AndFilter`** / **`OrFilter`** - Composite filters for nested logic
 - **`FilterContext`** - Shared context with cached API data (user stats, activity)
 - **`Following`** - Data class representing a followed user
 - **`FilterResult`** - Result containing matched filters and details
+- **`FilterExpressionParser`** - Recursive descent parser for filter expressions
 
 Available filters (use `--list-filters` to see all):
 
@@ -46,6 +48,12 @@ Available filters (use `--list-filters` to see all):
 - `no-interaction` - Users who haven't interacted with recent content
 - `inactive:DAYS` - Users who haven't posted in DAYS
 - `repost-ratio:RATIO` - Users whose posts are mostly reposts
+
+**Filter Expressions**: Use `--filter-expr` for complex nested logic:
+
+- Syntax: `+` (AND), `|` (OR), `()` (grouping)
+- Precedence: `+` binds tighter than `|`
+- Example: `(a + b) | (c + d + (e | f)) | g`
 
 ### Key Patterns
 

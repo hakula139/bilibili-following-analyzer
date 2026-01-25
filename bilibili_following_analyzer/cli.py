@@ -20,9 +20,10 @@ from .filters import (
     FilterResult,
     Following,
     get_filter_help,
+    parse_filter_expression,
     parse_filter_spec,
 )
-from .utils import load_allow_list, print_filter_results
+from .utils import load_allow_list, output_results_to_file, print_filter_results
 
 
 T = TypeVar('T')
@@ -153,6 +154,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help='Limit analysis to the first N followings (for testing)',
     )
+    output_default = os.environ.get('OUTPUT')
+    parser.add_argument(
+        '-o',
+        '--output',
+        type=Path,
+        metavar='FILE',
+        default=Path(output_default) if output_default else None,
+        help='Output results to a file (supports .txt, .json, .csv). Env: OUTPUT',
+    )
 
     # Filter arguments
     filter_group = parser.add_argument_group(
@@ -172,6 +182,17 @@ def parse_args() -> argparse.Namespace:
         choices=['and', 'or'],
         default=os.environ.get('FILTER_MODE', 'and'),
         help='How to combine filters: and (all match) / or (any). Env: FILTER_MODE',
+    )
+    filter_group.add_argument(
+        '--filter-expr',
+        type=str,
+        metavar='EXPR',
+        default=os.environ.get('FILTER_EXPR'),
+        help=(
+            'Complex filter expression with nested AND/OR logic. '
+            'Use + for AND, | for OR, () for grouping. '
+            'Example: "(a + b) | (c + d + (e | f))". Env: FILTER_EXPR'
+        ),
     )
     filter_group.add_argument(
         '--list-filters',
@@ -333,7 +354,7 @@ def apply_filters(
     mode: str,
 ) -> list[FilterResult]:
     """
-    Apply filters to a list of followings.
+    Apply filters to a list of followings (simple mode).
 
     Parameters
     ----------
@@ -372,6 +393,44 @@ def apply_filters(
             # Any filter matches
             if result.matched_filters:
                 results.append(result)
+
+    print(f'  Found {len(results)} matching users')
+
+    return results
+
+
+def apply_filter_expression(
+    followings: list[Following],
+    composite_filter: Filter,
+    ctx: FilterContext,
+) -> list[FilterResult]:
+    """
+    Apply a composite filter expression to a list of followings.
+
+    Parameters
+    ----------
+    followings : list[Following]
+        The users to filter.
+    composite_filter : Filter
+        A composite filter (AndFilter / OrFilter) representing the expression.
+    ctx : FilterContext
+        Shared context for filter evaluation.
+
+    Returns
+    -------
+    list[FilterResult]
+        Results for users who matched the filter expression.
+    """
+    results: list[FilterResult] = []
+
+    print('Applying filter expression...')
+
+    for following in tqdm(followings, desc='Filtering', unit='user'):
+        matched, detail = composite_filter.matches(following, ctx)
+        if matched:
+            result = FilterResult(following=following)
+            result.add_match('expression', detail)
+            results.append(result)
 
     print(f'  Found {len(results)} matching users')
 
@@ -445,14 +504,34 @@ def _fetch_followings(
     return followings
 
 
+def _needs_interaction_data(filter_obj: Filter) -> bool:
+    """Check if a filter (possibly composite) needs interaction data."""
+    from .filters import AndFilter, OrFilter
+
+    if filter_obj.name == 'no-interaction':
+        return True
+    if isinstance(filter_obj, (AndFilter, OrFilter)):
+        return any(_needs_interaction_data(f) for f in filter_obj.filters)
+    return False
+
+
 def _run_analysis(
     args: argparse.Namespace,
-    filters: list[Filter],
+    filters: list[Filter] | None,
+    composite_filter: Filter | None,
     cache_fetcher: CachedDataFetcher,
     allow_list: set[int],
 ) -> list[FilterResult]:
-    """Run the main analysis with the API client."""
-    needs_interactions = any(f.name == 'no-interaction' for f in filters)
+    """
+    Run the main analysis with the API client.
+
+    Either filters (simple mode) or composite_filter (expression mode) should be set.
+    """
+    # Check if we need interaction data
+    if composite_filter:
+        needs_interactions = _needs_interaction_data(composite_filter)
+    else:
+        needs_interactions = any(f.name == 'no-interaction' for f in (filters or []))
 
     with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
         # Collect interacting users if needed
@@ -478,7 +557,11 @@ def _run_analysis(
 
         # Fetch followings and apply filters
         followings = _fetch_followings(client, args.mid, allow_list, args.limit)
-        return apply_filters(followings, filters, ctx, args.filter_mode)
+
+        if composite_filter:
+            return apply_filter_expression(followings, composite_filter, ctx)
+        else:
+            return apply_filters(followings, filters or [], ctx, args.filter_mode)
 
 
 def main() -> None:
@@ -493,11 +576,23 @@ def main() -> None:
     if not args.mid:
         raise SystemExit('Error: --mid is required (or set MID in .env)')
 
-    # Parse and validate filters
-    filter_specs = _collect_filter_specs(args)
-    filters = _parse_filters(filter_specs)
-    filter_names = ', '.join(f.name for f in filters)
-    print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
+    # Parse filters (expression mode or simple mode)
+    filters: list[Filter] | None = None
+    composite_filter: Filter | None = None
+
+    if args.filter_expr:
+        # Expression mode: parse complex filter expression
+        try:
+            composite_filter = parse_filter_expression(args.filter_expr)
+            print(f'Filter expression: {args.filter_expr}')
+        except ValueError as e:
+            raise SystemExit(f'Error parsing filter expression: {e}') from None
+    else:
+        # Simple mode: use -f/--filter options
+        filter_specs = _collect_filter_specs(args)
+        filters = _parse_filters(filter_specs)
+        filter_names = ', '.join(f.name for f in filters)
+        print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
 
     # Initialize cache and load allow list
     cache_fetcher = _setup_cache(args)
@@ -506,7 +601,11 @@ def main() -> None:
         print(f'Loaded {len(allow_list)} users in allow list')
 
     try:
-        results = _run_analysis(args, filters, cache_fetcher, allow_list)
+        results = _run_analysis(
+            args, filters, composite_filter, cache_fetcher, allow_list
+        )
         print_filter_results(results)
+        if args.output:
+            output_results_to_file(results, args.output)
     finally:
         cache_fetcher.close()

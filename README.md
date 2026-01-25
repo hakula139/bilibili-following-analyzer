@@ -66,13 +66,15 @@ Use `--list-filters` to see all available filters:
 | ---------------- | -------------- | ------- | ------------------------------------------------------- |
 | `-f, --filter`   | `FILTERS`      | -       | Add a filter (repeatable, comma-separated in env)       |
 | `--filter-mode`  | `FILTER_MODE`  | `and`   | Combine filters with `and` (all match) or `or` (any)    |
+| `--filter-expr`  | `FILTER_EXPR`  | -       | Complex filter expression with nested AND/OR logic      |
 | `--mid`          | `MID`          | -       | Your Bilibili UID                                       |
 | `--sessdata`     | `SESSDATA`     | -       | SESSDATA cookie for authenticated API calls             |
 | `--num-videos`   | `NUM_VIDEOS`   | 10      | Videos to check for interactions (for `no-interaction`) |
 | `--num-dynamics` | `NUM_DYNAMICS` | 20      | Dynamics to check for interactions                      |
 | `--allow-list`   | `ALLOW_LIST`   | -       | Path to file with UIDs to skip (one per line)           |
 | `--delay`        | `DELAY`        | 0.3     | Delay between API requests (seconds)                    |
-| `--limit`        | -              | -       | Analyze only first N followings (for testing)           |
+| `--limit`        | -              | -       | Analyze only first N followings                         |
+| `-o, --output`   | `OUTPUT`       | -       | Output results to file (.txt, .json, .csv)              |
 | `--no-cache`     | -              | -       | Disable disk caching (in-memory only)                   |
 | `--clear-cache`  | -              | -       | Clear cached data before running                        |
 | `--cache-dir`    | -              | (auto)  | Custom cache directory                                  |
@@ -104,6 +106,25 @@ Using env variables:
 FILTERS=not-following-back,below-followers:5000
 FILTER_MODE=and
 ```
+
+Complex filter expression with nested logic:
+
+```bash
+# Find users matching ANY of these conditions:
+# 1. Non-followers with < 5000 fans
+# 2. Mutual followers who don't interact AND are problematic
+# 3. Deactivated accounts
+uv run bilibili-analyzer --filter-expr \
+  '(not-following-back + below-followers:5000) | \
+   (mutual + no-interaction + (too-many-followings:2000 | inactive:365 | no-posts)) | \
+   deactivated' \
+  -o results.json
+```
+
+Expression syntax:
+- `+` for AND (higher precedence)
+- `|` for OR (lower precedence)
+- `()` for grouping
 
 ### Allow List Format
 
