@@ -10,6 +10,7 @@ Analyzes your Bilibili following list to find:
 from __future__ import annotations
 
 import argparse
+import os
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests
+from dotenv import load_dotenv
 
 
 if TYPE_CHECKING:
@@ -474,6 +476,8 @@ def print_results(
 
 
 def main() -> None:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         description='Analyze your Bilibili following list',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -482,45 +486,50 @@ def main() -> None:
     parser.add_argument(
         '--mid',
         type=int,
-        required=True,
+        default=os.environ.get('MID'),
         help='Your Bilibili user ID (UID)',
     )
     parser.add_argument(
         '--sessdata',
         type=str,
+        default=os.environ.get('SESSDATA'),
         help='SESSDATA cookie for authentication (required for some features)',
     )
     parser.add_argument(
         '--follower-threshold',
         type=int,
-        default=5000,
+        default=int(os.environ.get('FOLLOWER_THRESHOLD', 5000)),
         help='Only report non-followers with fewer than this many followers',
     )
     parser.add_argument(
         '--num-videos',
         type=int,
-        default=10,
+        default=int(os.environ.get('NUM_VIDEOS', 10)),
         help='Number of recent videos to check for interactions',
     )
     parser.add_argument(
         '--num-dynamics',
         type=int,
-        default=10,
+        default=int(os.environ.get('NUM_DYNAMICS', 10)),
         help='Number of recent dynamics to check for interactions',
     )
     parser.add_argument(
         '--allow-list',
         type=Path,
+        default=os.environ.get('ALLOW_LIST'),
         help='Path to allow list file (one UID per line)',
     )
     parser.add_argument(
         '--delay',
         type=float,
-        default=0.3,
+        default=float(os.environ.get('DELAY', 0.3)),
         help='Delay between API requests (seconds)',
     )
 
     args = parser.parse_args()
+
+    if not args.mid:
+        parser.error('--mid is required (or set MID in .env)')
 
     # Load allow list
     allow_list = load_allow_list(args.allow_list)

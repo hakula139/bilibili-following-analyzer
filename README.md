@@ -5,48 +5,73 @@ Analyze your Bilibili following list to find:
 - **Non-followers** with fewer followers than a threshold (potential spam / inactive accounts)
 - **Silent followers** who don't interact with your recent content
 
-## Requirements
+## Installation
+
+Using [uv](https://docs.astral.sh/uv/) (recommended):
 
 ```bash
-pip install requests
+uv sync
 ```
+
+Or with pip:
+
+```bash
+pip install -e .
+```
+
+## Configuration
+
+Create a `.env` file in the project root:
+
+```bash
+MID=12345
+SESSDATA="your_sessdata_here"
+```
+
+All options can be set via `.env` or CLI arguments. CLI arguments override `.env` values.
 
 ## Usage
 
 ```bash
-python check.py --mid <YOUR_UID> [OPTIONS]
+uv run check.py [OPTIONS]
+```
+
+Or if installed with pip:
+
+```bash
+python check.py [OPTIONS]
 ```
 
 ### Options
 
-| Option                 | Default    | Description                                         |
-| ---------------------- | ---------- | --------------------------------------------------- |
-| `--mid`                | (required) | Your Bilibili UID                                   |
-| `--sessdata`           | None       | SESSDATA cookie for authenticated API calls         |
-| `--follower-threshold` | 5000       | Report non-followers below this follower count      |
-| `--num-videos`         | 10         | Number of recent videos to check for interactions   |
-| `--num-dynamics`       | 10         | Number of recent dynamics to check for interactions |
-| `--allow-list`         | None       | Path to file with UIDs to skip (one per line)       |
-| `--delay`              | 0.3        | Delay between API requests (seconds)                |
+| Option                 | Env Variable         | Default | Description                                         |
+| ---------------------- | -------------------- | ------- | --------------------------------------------------- |
+| `--mid`                | `MID`                | -       | Your Bilibili UID                                   |
+| `--sessdata`           | `SESSDATA`           | -       | SESSDATA cookie for authenticated API calls         |
+| `--follower-threshold` | `FOLLOWER_THRESHOLD` | 5000    | Report non-followers below this follower count      |
+| `--num-videos`         | `NUM_VIDEOS`         | 10      | Number of recent videos to check for interactions   |
+| `--num-dynamics`       | `NUM_DYNAMICS`       | 10      | Number of recent dynamics to check for interactions |
+| `--allow-list`         | `ALLOW_LIST`         | -       | Path to file with UIDs to skip (one per line)       |
+| `--delay`              | `DELAY`              | 0.3     | Delay between API requests (seconds)                |
 
 ### Examples
 
-Basic check (non-followers only):
+Basic check (with `.env` configured):
 
 ```bash
-python check.py --mid 12345
+uv run check.py
 ```
 
-Full analysis with interaction checking:
+Override threshold via CLI:
 
 ```bash
-python check.py --mid 12345 --sessdata "your_sessdata_here"
+uv run check.py --follower-threshold 10000
 ```
 
 With allow list to skip certain users:
 
 ```bash
-python check.py --mid 12345 --sessdata "..." --allow-list allow_list.txt
+uv run check.py --allow-list allow_list.txt
 ```
 
 ### Allow List Format

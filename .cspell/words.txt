@@ -1,5 +1,7 @@
 bilibili
+dotenv
 khtml
+pyproject
 referer
 satsuki
 sessdata
