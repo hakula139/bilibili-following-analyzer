@@ -199,7 +199,9 @@ class BilibiliClient:
         }
 
         query = urllib.parse.urlencode(signed)
-        signed['w_rid'] = md5((query + mixin_key).encode()).hexdigest()
+        signed['w_rid'] = md5(
+            (query + mixin_key).encode(), usedforsecurity=False
+        ).hexdigest()
 
         return signed
 

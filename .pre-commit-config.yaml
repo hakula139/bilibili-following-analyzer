@@ -1,0 +1,39 @@
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Python type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        files: ^bilibili_following_analyzer/.*\.pyi?$
+        additional_dependencies:
+          - types-requests
+
+  # Python linting and formatting with ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff-check
+        files: ^bilibili_following_analyzer/.*\.pyi?$
+        args:
+          - --fix
+          - --unsafe-fixes
+      - id: ruff-format
+        files: ^bilibili_following_analyzer/.*\.pyi?$
+
+  # Python security linting with bandit
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.9.3
+    hooks:
+      - id: bandit
+        files: ^bilibili_following_analyzer/.*\.pyi?$
+        additional_dependencies:
+          - bandit[toml]

@@ -2,6 +2,7 @@ bilibili
 buvid
 dotenv
 khtml
+mypy
 pyproject
 referer
 satsuki
