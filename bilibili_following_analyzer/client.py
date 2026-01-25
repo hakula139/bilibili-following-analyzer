@@ -593,9 +593,12 @@ class BilibiliClient:
         try:
             for dynamic in self.get_user_dynamics(mid, max_count=max_dynamics):
                 dynamics.append(dynamic)
-        except BilibiliAPIError:
-            # API error may indicate deactivated account or private space
-            result['is_deactivated'] = True
+        except BilibiliAPIError as e:
+            # Only mark as deactivated for specific error codes
+            # -404: user does not exist (deactivated / 注销)
+            if e.code == -404:
+                result['is_deactivated'] = True
+            # Other errors (rate limiting, private space, etc.) - skip silently
             return result
 
         result['total_dynamics'] = len(dynamics)
