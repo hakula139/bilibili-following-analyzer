@@ -380,9 +380,9 @@ def apply_filters(
         result = FilterResult(following=following)
 
         for f in filters:
-            matched, detail = f.matches(following, ctx)
-            if matched:
-                result.add_match(f.name, detail)
+            match_info = f.matches(following, ctx)
+            if match_info.matched:
+                result.add_match(f.name, match_info.detail)
 
         # Determine if this user should be included in results
         if mode == 'and':
@@ -426,10 +426,15 @@ def apply_filter_expression(
     print('Applying filter expression...')
 
     for following in tqdm(followings, desc='Filtering', unit='user'):
-        matched, detail = composite_filter.matches(following, ctx)
-        if matched:
+        match_info = composite_filter.matches(following, ctx)
+        if match_info.matched:
             result = FilterResult(following=following)
-            result.add_match('expression', detail)
+            # Add each matched filter individually
+            for filter_name in match_info.filter_names:
+                result.add_match(filter_name, None)
+            # Store the combined detail under a special key for display
+            if match_info.detail:
+                result.details['_combined'] = match_info.detail
             results.append(result)
 
     print(f'  Found {len(results)} matching users')

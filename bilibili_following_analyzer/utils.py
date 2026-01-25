@@ -41,6 +41,24 @@ def load_allow_list(path: Path | None) -> set[int]:
     return allow_list
 
 
+def _get_display_details(result: FilterResult) -> str:
+    """Get display string for filter match details."""
+    # Check for combined detail from composite filters
+    combined = result.details.get('_combined')
+    if combined:
+        return combined
+
+    # Build from individual filter details
+    details: list[str] = []
+    for filter_name in result.matched_filters:
+        detail = result.details.get(filter_name)
+        if detail:
+            details.append(detail)
+        else:
+            details.append(filter_name)
+    return '; '.join(details)
+
+
 def print_filter_results(results: list[FilterResult]) -> None:
     """
     Print filter results to stdout.
@@ -65,25 +83,23 @@ def print_filter_results(results: list[FilterResult]) -> None:
         user = result.following
         print(f'{user.name} - {user.space_url}')
 
-        # Show matched filter details
-        details: list[str] = []
-        for filter_name in result.matched_filters:
-            detail = result.details.get(filter_name)
-            if detail:
-                details.append(detail)
-            else:
-                details.append(filter_name)
-
+        details = _get_display_details(result)
         if details:
-            print(f'  └─ {", ".join(details)}')
+            print(f'  └─ {details}')
 
 
 def _result_to_dict(result: FilterResult) -> dict[str, object]:
     """Convert a FilterResult to a dictionary for serialization."""
-    details: list[str] = []
-    for filter_name in result.matched_filters:
-        detail = result.details.get(filter_name)
-        details.append(detail if detail else filter_name)
+    # Get details - either from combined or individual
+    combined = result.details.get('_combined')
+    if combined:
+        # Split combined detail by '; ' to get individual details
+        details = [d.strip() for d in combined.split(';')]
+    else:
+        details = []
+        for filter_name in result.matched_filters:
+            detail = result.details.get(filter_name)
+            details.append(detail if detail else filter_name)
 
     return {
         'mid': result.following.mid,
@@ -114,24 +130,27 @@ def output_results_to_file(results: list[FilterResult], path: Path) -> None:
     elif suffix == '.csv':
         with path.open('w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['mid', 'name', 'space_url', 'is_mutual', 'details'])
+            writer.writerow(
+                ['mid', 'name', 'space_url', 'is_mutual', 'matched_filters', 'details']
+            )
             for r in results:
-                details = ', '.join(r.details.get(fn) or fn for fn in r.matched_filters)
                 writer.writerow(
                     [
                         r.following.mid,
                         r.following.name,
                         r.following.space_url,
                         r.following.is_mutual,
-                        details,
+                        ', '.join(r.matched_filters),
+                        _get_display_details(r),
                     ]
                 )
     else:
         # Default to plain text
         lines: list[str] = []
         for r in results:
-            details = ', '.join(r.details.get(fn) or fn for fn in r.matched_filters)
-            lines.append(f'{r.following.name}\t{r.following.space_url}\t{details}')
+            lines.append(
+                f'{r.following.name}\t{r.following.space_url}\t{_get_display_details(r)}'
+            )
         path.write_text('\n'.join(lines), encoding='utf-8')
 
     print(f'Results saved to: {path}')

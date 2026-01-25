@@ -6,7 +6,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from .cache import (
     TTL_USER_ACTIVITY,
@@ -19,6 +19,37 @@ from .cache import (
 
 if TYPE_CHECKING:
     from .client import BilibiliClient
+
+
+@dataclass
+class MatchInfo:
+    """
+    Result of a filter match operation.
+
+    Attributes
+    ----------
+    matched : bool
+        Whether the filter matched.
+    detail : str or None
+        Human-readable explanation of why the filter matched.
+    filter_names : list[str]
+        Names of the filters that matched (for composite filters, includes all
+        sub-filters that contributed to the match).
+    """
+
+    matched: bool
+    detail: str | None = None
+    filter_names: list[str] = field(default_factory=list)
+
+    @classmethod
+    def no_match(cls) -> Self:
+        """Create a non-matching result."""
+        return cls(matched=False)
+
+    @classmethod
+    def match(cls, filter_name: str, detail: str | None = None) -> Self:
+        """Create a matching result for a single filter."""
+        return cls(matched=True, detail=detail, filter_names=[filter_name])
 
 
 @dataclass
@@ -218,9 +249,7 @@ class Filter(ABC):
         return cls()
 
     @abstractmethod
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         """
         Check if a following matches this filter.
 
@@ -233,9 +262,8 @@ class Filter(ABC):
 
         Returns
         -------
-        tuple[bool, str | None]
-            (matched, detail) where matched is True if the filter applies,
-            and detail is an optional human-readable explanation.
+        MatchInfo
+            Match result including whether matched, detail, and filter names.
         """
         ...
 
@@ -251,12 +279,10 @@ class NotFollowingBackFilter(Filter):
     name = 'not-following-back'
     description = 'Users who do not follow you back'
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         if not following.is_mutual:
-            return True, '未回关'
-        return False, None
+            return MatchInfo.match(self.name, '未回关')
+        return MatchInfo.no_match()
 
 
 class MutualFollowFilter(Filter):
@@ -265,12 +291,10 @@ class MutualFollowFilter(Filter):
     name = 'mutual'
     description = 'Users who follow you back (mutual follows)'
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         if following.is_mutual:
-            return True, '互相关注'
-        return False, None
+            return MatchInfo.match(self.name, '互相关注')
+        return MatchInfo.no_match()
 
 
 class _ThresholdStatFilter(Filter):
@@ -294,9 +318,7 @@ class _ThresholdStatFilter(Filter):
     def create(cls, param: str | None = None) -> Filter:
         return cls(cls._parse_int_param(param))
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         stat = ctx.get_user_stat(following.mid)
         value = stat.get(self.stat_field, 0)
         if self.compare_above:
@@ -304,8 +326,8 @@ class _ThresholdStatFilter(Filter):
         else:
             matched = value < self.threshold
         if matched:
-            return True, f'{self.detail_prefix} {value}'
-        return False, None
+            return MatchInfo.match(self.name, f'{self.detail_prefix} {value}')
+        return MatchInfo.no_match()
 
 
 class BelowFollowersFilter(_ThresholdStatFilter):
@@ -336,12 +358,10 @@ class NoInteractionFilter(Filter):
     name = 'no-interaction'
     description = 'Users who have not interacted with your recent content'
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         if following.mid not in ctx.interacting_users:
-            return True, '无近期互动'
-        return False, None
+            return MatchInfo.match(self.name, '无近期互动')
+        return MatchInfo.no_match()
 
 
 class TooManyFollowingsFilter(_ThresholdStatFilter):
@@ -370,24 +390,22 @@ class InactiveFilter(Filter):
     def create(cls, param: str | None = None) -> Filter:
         return cls(cls._parse_int_param(param))
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
 
         if activity['is_deactivated']:
-            return True, '账号已注销'
+            return MatchInfo.match(self.name, '账号已注销')
 
         if activity['total_dynamics'] == 0:
-            return True, '无任何动态'
+            return MatchInfo.match(self.name, '无任何动态')
 
         if activity['last_post_ts'] is not None:
             now_ts = int(time.time())
             days_since_post = (now_ts - activity['last_post_ts']) // 86400
             if days_since_post > self.days:
-                return True, f'超过 {days_since_post} 天未更新'
+                return MatchInfo.match(self.name, f'超过 {days_since_post} 天未更新')
 
-        return False, None
+        return MatchInfo.no_match()
 
 
 class RepostRatioFilter(Filter):
@@ -405,20 +423,18 @@ class RepostRatioFilter(Filter):
     def create(cls, param: str | None = None) -> Filter:
         return cls(cls._parse_float_param(param))
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
 
         if activity['total_dynamics'] == 0:
-            return False, None
+            return MatchInfo.no_match()
 
         ratio = activity['repost_count'] / activity['total_dynamics']
         if ratio >= self.ratio:
             pct = int(ratio * 100)
-            return True, f'{pct}% 为转发'
+            return MatchInfo.match(self.name, f'{pct}% 为转发')
 
-        return False, None
+        return MatchInfo.no_match()
 
 
 class DeactivatedFilter(Filter):
@@ -427,13 +443,11 @@ class DeactivatedFilter(Filter):
     name = 'deactivated'
     description = 'Users with deactivated or inaccessible accounts'
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
         if activity['is_deactivated']:
-            return True, '账号已注销或不可访问'
-        return False, None
+            return MatchInfo.match(self.name, '账号已注销或不可访问')
+        return MatchInfo.no_match()
 
 
 class NoPostsFilter(Filter):
@@ -442,13 +456,11 @@ class NoPostsFilter(Filter):
     name = 'no-posts'
     description = 'Users who have no posts/dynamics at all'
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
         if not activity['is_deactivated'] and activity['total_dynamics'] == 0:
-            return True, '无任何动态'
-        return False, None
+            return MatchInfo.match(self.name, '无任何动态')
+        return MatchInfo.no_match()
 
 
 # -----------------------------------------------------------------------------
@@ -469,17 +481,23 @@ class AndFilter(Filter):
     def __init__(self, filters: list[Filter]) -> None:
         self.filters = filters
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
-        details: list[str] = []
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
+        all_details: list[str] = []
+        all_filter_names: list[str] = []
+
         for f in self.filters:
-            matched, detail = f.matches(following, ctx)
-            if not matched:
-                return False, None
-            if detail:
-                details.append(detail)
-        return True, '; '.join(details) if details else None
+            result = f.matches(following, ctx)
+            if not result.matched:
+                return MatchInfo.no_match()
+            if result.detail:
+                all_details.append(result.detail)
+            all_filter_names.extend(result.filter_names)
+
+        return MatchInfo(
+            matched=True,
+            detail='; '.join(all_details) if all_details else None,
+            filter_names=all_filter_names,
+        )
 
 
 class OrFilter(Filter):
@@ -495,17 +513,24 @@ class OrFilter(Filter):
     def __init__(self, filters: list[Filter]) -> None:
         self.filters = filters
 
-    def matches(
-        self, following: Following, ctx: FilterContext
-    ) -> tuple[bool, str | None]:
+    def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         all_details: list[str] = []
+        all_filter_names: list[str] = []
+
         for f in self.filters:
-            matched, detail = f.matches(following, ctx)
-            if matched and detail:
-                all_details.append(detail)
-        if all_details:
-            return True, '; '.join(all_details)
-        return False, None
+            result = f.matches(following, ctx)
+            if result.matched:
+                if result.detail:
+                    all_details.append(result.detail)
+                all_filter_names.extend(result.filter_names)
+
+        if all_filter_names:
+            return MatchInfo(
+                matched=True,
+                detail='; '.join(all_details) if all_details else None,
+                filter_names=all_filter_names,
+            )
+        return MatchInfo.no_match()
 
 
 # -----------------------------------------------------------------------------

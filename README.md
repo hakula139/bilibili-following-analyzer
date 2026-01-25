@@ -122,6 +122,7 @@ uv run bilibili-analyzer --filter-expr \
 ```
 
 Expression syntax:
+
 - `+` for AND (higher precedence)
 - `|` for OR (lower precedence)
 - `()` for grouping
