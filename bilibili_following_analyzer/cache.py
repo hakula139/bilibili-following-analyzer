@@ -14,8 +14,11 @@ if TYPE_CHECKING:
 
 
 # Default TTLs in seconds
-TTL_USER_STAT = 24 * 60 * 60  # 24 hours - follower/following counts change slowly
+TTL_USER_STAT = 24 * 60 * 60  # 24 hours - follower / following counts change slowly
 TTL_USER_ACTIVITY = 6 * 60 * 60  # 6 hours - post activity changes more often
+
+# Cache size limit (10 MB - sufficient for ~1000 users with stat + activity data)
+CACHE_SIZE_LIMIT = 10 * 1024 * 1024
 
 # App name for platformdirs
 APP_NAME = 'bilibili-analyzer'
@@ -54,7 +57,7 @@ def get_cache(directory: Path | None = None) -> Cache:
     """
     cache_dir = directory or get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return diskcache.Cache(str(cache_dir))
+    return diskcache.Cache(str(cache_dir), size_limit=CACHE_SIZE_LIMIT)
 
 
 def make_user_stat_key(mid: int) -> str:
