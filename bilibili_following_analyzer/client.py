@@ -607,10 +607,13 @@ class BilibiliClient:
             return result
 
         # Check most recent post timestamp
-        first_dynamic = dynamics[0]
-        pub_ts = first_dynamic.get('modules', {}).get('module_author', {}).get('pub_ts')
-        if pub_ts is not None:
-            result['last_post_ts'] = int(pub_ts)
+        for dynamic in dynamics:
+            if dynamic.get('modules', {}).get('module_tag', {}).get('text') == '置顶':
+                continue
+            pub_ts = dynamic.get('modules', {}).get('module_author', {}).get('pub_ts')
+            if pub_ts is not None:
+                result['last_post_ts'] = int(pub_ts)
+            break
 
         # Count reposts (type DYNAMIC_TYPE_FORWARD)
         for dynamic in dynamics:
