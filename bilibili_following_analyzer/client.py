@@ -615,10 +615,17 @@ class BilibiliClient:
                 result['last_post_ts'] = int(pub_ts)
             break
 
-        # Count reposts (type DYNAMIC_TYPE_FORWARD)
+        # Count reposts (forwards with no meaningful commentary)
         for dynamic in dynamics:
-            dynamic_type = dynamic.get('type', '')
-            if dynamic_type == 'DYNAMIC_TYPE_FORWARD':
+            if dynamic.get('type', '') != 'DYNAMIC_TYPE_FORWARD':
+                continue
+            desc_text = (
+                dynamic.get('modules', {})
+                .get('module_dynamic', {})
+                .get('desc', {})
+                .get('text', '')
+            )
+            if desc_text in ['转发动态', '分享动态']:
                 result['repost_count'] += 1
 
         return result
