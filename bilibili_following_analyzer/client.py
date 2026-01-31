@@ -608,9 +608,12 @@ class BilibiliClient:
 
         # Check most recent post timestamp
         for dynamic in dynamics:
-            if dynamic.get('modules', {}).get('module_tag', {}).get('text') == '置顶':
+            modules: dict[str, Any] = dynamic.get('modules') or {}
+            tag: dict[str, Any] = modules.get('module_tag') or {}
+            if tag.get('text') == '置顶':
                 continue
-            pub_ts = dynamic.get('modules', {}).get('module_author', {}).get('pub_ts')
+            author: dict[str, Any] = modules.get('module_author') or {}
+            pub_ts = author.get('pub_ts')
             if pub_ts is not None:
                 result['last_post_ts'] = int(pub_ts)
             break
@@ -619,12 +622,10 @@ class BilibiliClient:
         for dynamic in dynamics:
             if dynamic.get('type', '') != 'DYNAMIC_TYPE_FORWARD':
                 continue
-            desc_text = (
-                dynamic.get('modules', {})
-                .get('module_dynamic', {})
-                .get('desc', {})
-                .get('text', '')
-            )
+            modules = dynamic.get('modules') or {}
+            module_dynamic: dict[str, Any] = modules.get('module_dynamic') or {}
+            desc: dict[str, Any] = module_dynamic.get('desc') or {}
+            desc_text = desc.get('text', '')
             if desc_text in ['转发动态', '分享动态']:
                 result['repost_count'] += 1
 
