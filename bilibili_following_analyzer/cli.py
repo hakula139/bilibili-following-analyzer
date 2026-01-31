@@ -267,7 +267,7 @@ def _collect_video_interactions(
     for video in tqdm(videos, desc='Videos', unit='video'):
         aid = video['aid']
         for comment in client.get_video_comments(aid, max_count=100):
-            users.add(comment['member']['mid'])
+            users.add(int(comment['member']['mid']))
 
 
 def _collect_dynamic_interactions(
@@ -298,12 +298,12 @@ def _collect_dynamic_interactions(
 
         # Get likes and forwards
         for reaction in client.get_dynamic_reactions(dynamic_id):
-            users.add(reaction['mid'])
+            users.add(int(reaction['mid']))
 
         # Get comments (some dynamic types don't support comments)
         try:
             for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
-                users.add(comment['member']['mid'])
+                users.add(int(comment['member']['mid']))
         except BilibiliAPIError as e:
             if e.code == -404:
                 pass  # Dynamic has no comment section
