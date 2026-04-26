@@ -23,6 +23,7 @@ env/
 
 # User-specific data
 allow_list.txt
+results.json
 .env
 
 # Local cache (if using --cache-dir .cache)
