@@ -15,6 +15,7 @@ from .cache import (
     make_user_activity_key,
     make_user_stat_key,
 )
+from .client import ActivityStatus, UserActivity
 
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ class FilterContext:
         Disk cache for persistent storage across runs.
     user_stats : dict[int, dict]
         In-memory cache for user stats (hot cache for current session).
-    user_activity : dict[int, dict]
+    user_activity : dict[int, UserActivity]
         In-memory cache for user activity (hot cache for current session).
     """
 
@@ -81,7 +82,7 @@ class FilterContext:
     interacting_users: set[int] = field(default_factory=set)
     cache: CachedDataFetcher = field(default_factory=CachedDataFetcher)
     user_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
-    user_activity: dict[int, dict[str, Any]] = field(default_factory=dict)
+    user_activity: dict[int, UserActivity] = field(default_factory=dict)
 
     def get_user_stat(self, mid: int) -> dict[str, Any]:
         """
@@ -101,7 +102,7 @@ class FilterContext:
         self.user_stats[mid] = stat
         return stat
 
-    def get_user_activity(self, mid: int, max_dynamics: int = 10) -> dict[str, Any]:
+    def get_user_activity(self, mid: int, max_dynamics: int = 10) -> UserActivity:
         """
         Get user activity with two-level caching.
 
@@ -393,15 +394,20 @@ class InactiveFilter(Filter):
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
 
-        if activity['is_deactivated']:
+        if activity.status == ActivityStatus.DEACTIVATED:
             return MatchInfo.match(self.name, '账号已注销')
 
-        if activity['total_dynamics'] == 0:
+        # Don't claim inactivity for users we couldn't fetch -- the absence of
+        # dynamics in our result means "fetch failed", not "no posts".
+        if activity.status != ActivityStatus.OK:
+            return MatchInfo.no_match()
+
+        if activity.total_dynamics == 0:
             return MatchInfo.match(self.name, '无任何动态')
 
-        if activity['last_post_ts'] is not None:
+        if activity.last_post_ts is not None:
             now_ts = int(time.time())
-            days_since_post = (now_ts - activity['last_post_ts']) // 86400
+            days_since_post = (now_ts - activity.last_post_ts) // 86400
             if days_since_post > self.days:
                 return MatchInfo.match(self.name, f'超过 {days_since_post} 天未更新')
 
@@ -426,10 +432,10 @@ class RepostRatioFilter(Filter):
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
 
-        if activity['total_dynamics'] == 0:
+        if activity.status != ActivityStatus.OK or activity.total_dynamics == 0:
             return MatchInfo.no_match()
 
-        ratio = activity['repost_count'] / activity['total_dynamics']
+        ratio = activity.repost_count / activity.total_dynamics
         if ratio >= self.ratio:
             pct = int(ratio * 100)
             return MatchInfo.match(self.name, f'{pct}% 为转发')
@@ -445,7 +451,7 @@ class DeactivatedFilter(Filter):
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
-        if activity['is_deactivated']:
+        if activity.status == ActivityStatus.DEACTIVATED:
             return MatchInfo.match(self.name, '账号已注销或不可访问')
         return MatchInfo.no_match()
 
@@ -458,7 +464,7 @@ class NoPostsFilter(Filter):
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
-        if not activity['is_deactivated'] and activity['total_dynamics'] == 0:
+        if activity.status == ActivityStatus.OK and activity.total_dynamics == 0:
             return MatchInfo.match(self.name, '无任何动态')
         return MatchInfo.no_match()
 

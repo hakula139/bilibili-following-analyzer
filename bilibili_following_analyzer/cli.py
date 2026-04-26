@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from .cache import CachedDataFetcher, get_cache, get_cache_dir
-from .client import BilibiliClient
+from .client import ActivityStatus, BilibiliClient
 from .filters import (
     Filter,
     FilterContext,
@@ -24,6 +25,26 @@ from .filters import (
     parse_filter_spec,
 )
 from .utils import load_allow_list, output_results_to_file, print_filter_results
+
+
+def _report_activity_failures(ctx: FilterContext) -> None:
+    """Print a summary of users whose activity could not be fetched.
+
+    Surfaces fetch failures (rate limits, risk-control challenges, etc.) so
+    they aren't silently treated as "no posts" by activity-based filters.
+    """
+    failed = [
+        a for a in ctx.user_activity.values() if a.status == ActivityStatus.UNAVAILABLE
+    ]
+    if not failed:
+        return
+
+    by_code = Counter(a.error_code for a in failed)
+    breakdown = ', '.join(f'code={code}: {n}' for code, n in by_code.most_common())
+    print(
+        f'\nWarning: activity fetch failed for {len(failed)} user(s) '
+        f'({breakdown}); they were skipped by activity-based filters.'
+    )
 
 
 T = TypeVar('T')
@@ -564,9 +585,12 @@ def _run_analysis(
         followings = _fetch_followings(client, args.mid, allow_list, args.limit)
 
         if composite_filter:
-            return apply_filter_expression(followings, composite_filter, ctx)
+            results = apply_filter_expression(followings, composite_filter, ctx)
         else:
-            return apply_filters(followings, filters or [], ctx, args.filter_mode)
+            results = apply_filters(followings, filters or [], ctx, args.filter_mode)
+
+        _report_activity_failures(ctx)
+        return results
 
 
 def main() -> None:

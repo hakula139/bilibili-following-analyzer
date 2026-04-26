@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from dataclasses import dataclass
+from enum import Enum
 from functools import reduce
 from hashlib import md5
 from http.cookiejar import Cookie, CookieJar
@@ -14,6 +16,63 @@ import requests
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+class ActivityStatus(Enum):
+    """
+    Outcome of an attempt to fetch a user's activity data.
+
+    Values
+    ------
+    OK
+        Activity was fetched successfully. All other fields on
+        :class:`UserActivity` reflect real data.
+    DEACTIVATED
+        The account no longer exists (API error code ``-404``).
+    UNAVAILABLE
+        Activity could not be fetched (rate limit, risk-control, network
+        error, etc.). Activity-derived fields are not meaningful and must
+        not be interpreted as "no posts".
+    """
+
+    OK = 'ok'
+    DEACTIVATED = 'deactivated'
+    UNAVAILABLE = 'unavailable'
+
+
+@dataclass
+class UserActivity:
+    """
+    Result of fetching a user's activity data.
+
+    Attributes
+    ----------
+    status : ActivityStatus
+        Outcome of the fetch. Consumers MUST check this before reading any
+        of the activity-derived fields below.
+    following_count : int
+        Number of accounts the user follows. Always populated when known
+        (it comes from a separate stat endpoint that may succeed even when
+        the dynamic feed fails).
+    total_dynamics : int
+        Number of dynamics fetched (capped by ``max_dynamics``). Only
+        meaningful when ``status == OK``.
+    repost_count : int
+        Number of those dynamics that are pure reposts. Only meaningful
+        when ``status == OK``.
+    last_post_ts : int or None
+        Unix timestamp of the most recent non-pinned dynamic, or ``None``
+        if no such post was found. Only meaningful when ``status == OK``.
+    error_code : int or None
+        API error code that produced a non-OK status, for diagnostics.
+    """
+
+    status: ActivityStatus
+    following_count: int = 0
+    total_dynamics: int = 0
+    repost_count: int = 0
+    last_post_ts: int | None = None
+    error_code: int | None = None
 
 
 # fmt: off
@@ -553,11 +612,15 @@ class BilibiliClient:
             dynamic_id, type_=17, page_size=page_size, max_count=max_count
         )
 
-    def get_user_activity(self, mid: int, max_dynamics: int = 10) -> dict[str, Any]:
+    def get_user_activity(self, mid: int, max_dynamics: int = 10) -> UserActivity:
         """
         Get user activity info for filtering purposes.
 
-        Fetches dynamics and stats to determine user activity level.
+        Fetches the user's recent dynamics and following count, returning a
+        :class:`UserActivity` whose ``status`` distinguishes successful
+        fetches from deactivated accounts and from transient failures
+        (rate limit, risk-control, network error, etc.). Callers must
+        inspect ``status`` before trusting the activity-derived fields.
 
         Parameters
         ----------
@@ -568,65 +631,61 @@ class BilibiliClient:
 
         Returns
         -------
-        dict[str, Any]
-            Activity info with keys:
-            - following_count: int, number of users they follow
-            - is_deactivated: bool, True if account is deactivated
-            - total_dynamics: int, number of dynamics fetched (up to max_dynamics)
-            - repost_count: int, number of repost-only dynamics
-            - last_post_ts: int or None, timestamp of most recent dynamic
+        UserActivity
+            Activity info tagged with an :class:`ActivityStatus`.
         """
-        result: dict[str, Any] = {
-            'following_count': 0,
-            'is_deactivated': False,
-            'total_dynamics': 0,
-            'repost_count': 0,
-            'last_post_ts': None,
-        }
+        following_count = self.get_user_stat(mid).get('following', 0)
 
-        # Get following count from user stat
-        stat = self.get_user_stat(mid)
-        result['following_count'] = stat.get('following', 0)
-
-        # Fetch dynamics to check activity
-        dynamics: list[dict[str, Any]] = []
         try:
-            for dynamic in self.get_user_dynamics(mid, max_count=max_dynamics):
-                dynamics.append(dynamic)
+            dynamics = list(self.get_user_dynamics(mid, max_count=max_dynamics))
         except BilibiliAPIError as e:
-            # Only mark as deactivated for specific error codes
-            # -404: user does not exist (deactivated / 注销)
-            if e.code == -404:
-                result['is_deactivated'] = True
-            # Other errors (rate limiting, private space, etc.) - skip silently
-            return result
+            # -404 is the only code that unambiguously means the account is
+            # gone. Every other error (-352 risk-control, -799 rate limit,
+            # private space, network blip, ...) leaves real activity state
+            # unknown -- we must not let downstream filters interpret that
+            # as "the user has no posts".
+            status = (
+                ActivityStatus.DEACTIVATED
+                if e.code == -404
+                else ActivityStatus.UNAVAILABLE
+            )
+            return UserActivity(
+                status=status,
+                following_count=following_count,
+                error_code=e.code,
+            )
 
-        result['total_dynamics'] = len(dynamics)
+        return UserActivity(
+            status=ActivityStatus.OK,
+            following_count=following_count,
+            total_dynamics=len(dynamics),
+            repost_count=_count_reposts(dynamics),
+            last_post_ts=_latest_post_ts(dynamics),
+        )
 
-        if not dynamics:
-            return result
 
-        # Check most recent post timestamp
-        for dynamic in dynamics:
-            modules: dict[str, Any] = dynamic.get('modules') or {}
-            tag: dict[str, Any] = modules.get('module_tag') or {}
-            if tag.get('text') == '置顶':
-                continue
-            author: dict[str, Any] = modules.get('module_author') or {}
-            pub_ts = author.get('pub_ts')
-            if pub_ts is not None:
-                result['last_post_ts'] = int(pub_ts)
-            break
+def _latest_post_ts(dynamics: list[dict[str, Any]]) -> int | None:
+    """Return the publish timestamp of the most recent non-pinned dynamic."""
+    for dynamic in dynamics:
+        modules: dict[str, Any] = dynamic.get('modules') or {}
+        tag: dict[str, Any] = modules.get('module_tag') or {}
+        if tag.get('text') == '置顶':
+            continue
+        author: dict[str, Any] = modules.get('module_author') or {}
+        pub_ts = author.get('pub_ts')
+        return int(pub_ts) if pub_ts is not None else None
+    return None
 
-        # Count reposts (forwards with no meaningful commentary)
-        for dynamic in dynamics:
-            if dynamic.get('type', '') != 'DYNAMIC_TYPE_FORWARD':
-                continue
-            modules = dynamic.get('modules') or {}
-            module_dynamic: dict[str, Any] = modules.get('module_dynamic') or {}
-            desc: dict[str, Any] = module_dynamic.get('desc') or {}
-            desc_text = desc.get('text', '')
-            if desc_text in ['转发动态', '分享动态']:
-                result['repost_count'] += 1
 
-        return result
+def _count_reposts(dynamics: list[dict[str, Any]]) -> int:
+    """Count forward dynamics whose commentary is the default placeholder."""
+    count = 0
+    for dynamic in dynamics:
+        if dynamic.get('type') != 'DYNAMIC_TYPE_FORWARD':
+            continue
+        modules: dict[str, Any] = dynamic.get('modules') or {}
+        module_dynamic: dict[str, Any] = modules.get('module_dynamic') or {}
+        desc: dict[str, Any] = module_dynamic.get('desc') or {}
+        if desc.get('text', '') in ('转发动态', '分享动态'):
+            count += 1
+    return count

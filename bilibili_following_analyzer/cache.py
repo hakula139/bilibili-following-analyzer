@@ -66,8 +66,12 @@ def make_user_stat_key(mid: int) -> str:
 
 
 def make_user_activity_key(mid: int) -> str:
-    """Generate cache key for user activity data."""
-    return f'user_activity:{mid}'
+    """Generate cache key for user activity data.
+
+    The ``v2`` suffix avoids unpickling pre-refactor dict-shaped entries
+    into the current ``UserActivity`` consumer code path.
+    """
+    return f'user_activity_v2:{mid}'
 
 
 class CachedDataFetcher:
