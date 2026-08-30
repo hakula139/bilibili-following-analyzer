@@ -461,7 +461,21 @@ class BilibiliClient:
         count = 0
 
         while True:
-            params = {'mid': mid, 'ps': page_size, 'pn': pn, 'order': 'pubdate'}
+            params = {
+                'mid': mid,
+                'ps': page_size,
+                'pn': pn,
+                'order': 'pubdate',
+                'keyword': '',
+                'tid': 0,
+                'platform': 'web',
+                'web_location': 1550101,
+                'order_avoided': 'true',
+                'dm_img_list': '[]',
+                'dm_img_str': 'V2ViR0wgMS',
+                'dm_cover_img_str': 'SW50ZWwoUikgSEQgR3JhcGhpY3NJbnRlbA',
+                'dm_img_inter': '{"ds":[],"wh":[0,0,0],"of":[0,0,0]}',
+            }
             data = self._get(url, params, wbi=True)
 
             vlist = data.get('data', {}).get('list', {}).get('vlist', [])
