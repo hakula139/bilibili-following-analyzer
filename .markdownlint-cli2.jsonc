@@ -48,5 +48,5 @@
     "MD050": { "style": "asterisk" },
   },
 
-  "ignores": ["artifacts/", "data/", "work/", ".agents/plans/", ".claude/plans/"],
+  "ignores": [".agents/plans/", ".claude/plans/"],
 }
