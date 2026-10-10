@@ -1,49 +1,51 @@
-# Nix
-.direnv/
-.pre-commit-config.yaml
-result
-result-*
-
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-dist/
 *.egg-info/
 .eggs/
+
+# Build output
+build/
+dist/
+
+# Nix
+.direnv/
+.pre-commit-config.yaml
+result
+result-*
+
+# Environment
+.env
+.env.local
+.envrc.local
+.venv/
+venv/
+env/
+
+# Caches
+.cache/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 
-# Virtual environments
-venv/
-.venv/
-env/
-
-# Editor and OS files
+# OS files
 .DS_Store
+
+# User-specific data
+allow_list.txt
+results.json
+
+# Editor / assistant local settings
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-
-# Local assistant state
-.agents/plans/
-.claude/agent-memory-local/
-.claude/plans/
+.agents/plans
+.claude/agent-memory-local
+.claude/plans
 .claude/settings.local.json
-.claude/worktrees/
-
-# User-specific data
-allow_list.txt
-results.json
-.env
-.env.local
-.envrc.local
-
-# Local cache (if using --cache-dir .cache)
-.cache/
+.claude/worktrees
