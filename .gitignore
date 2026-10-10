@@ -40,7 +40,6 @@ results.json
 
 # Editor / assistant local settings
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
