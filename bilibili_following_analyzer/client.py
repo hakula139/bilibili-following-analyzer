@@ -47,10 +47,6 @@ class UserActivity:
     status : ActivityStatus
         Outcome of the fetch. Consumers MUST check this before reading any
         of the activity-derived fields below.
-    following_count : int
-        Number of accounts the user follows. Always populated when known
-        (it comes from a separate stat endpoint that may succeed even when
-        the dynamic feed fails).
     total_dynamics : int
         Number of dynamics fetched (capped by ``max_dynamics``). Only
         meaningful when ``status == OK``.
@@ -58,14 +54,13 @@ class UserActivity:
         Number of those dynamics that are pure reposts. Only meaningful
         when ``status == OK``.
     last_post_ts : int or None
-        Unix timestamp of the most recent non-pinned dynamic, or ``None``
+        Unix timestamp of the most recent fetched dynamic, or ``None``
         if no such post was found. Only meaningful when ``status == OK``.
     error_code : int or None
-        API error code that produced a non-OK status, for diagnostics.
+        API error or HTTP status code, or None for a connection failure.
     """
 
     status: ActivityStatus
-    following_count: int = 0
     total_dynamics: int = 0
     repost_count: int = 0
     last_post_ts: int | None = None
@@ -165,8 +160,7 @@ class BilibiliClient:
         self._img_key: str | None = None
         self._sub_key: str | None = None
 
-        # Fetch buvid3 cookie by visiting the homepage (required for some APIs)
-        self.session.get('https://www.bilibili.com/')
+        self._session_ready = False
 
     def __enter__(self) -> BilibiliClient:
         return self
@@ -177,6 +171,19 @@ class BilibiliClient:
     def close(self) -> None:
         """Close the underlying HTTP session."""
         self.session.close()
+
+    def _request(
+        self, url: str, params: dict[str, Any] | None = None
+    ) -> requests.Response:
+        self._rate_limit()
+        response = self.session.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return response
+
+    def _prepare_session(self) -> None:
+        if not self._session_ready:
+            self._request('https://www.bilibili.com/')
+            self._session_ready = True
 
     def _rate_limit(self) -> None:
         """Apply rate limiting delay between requests."""
@@ -206,14 +213,7 @@ class BilibiliClient:
         if self._img_key and self._sub_key:
             return self._img_key, self._sub_key
 
-        resp = self.session.get('https://api.bilibili.com/x/web-interface/nav')
-        resp.raise_for_status()
-        result: dict[str, Any] = resp.json()
-
-        # Validate API response
-        code = result.get('code', -1)
-        if code != 0:
-            raise BilibiliAPIError(code, result.get('message', 'Unknown error'))
+        result = self._get('https://api.bilibili.com/x/web-interface/nav')
 
         data = result.get('data', {})
         wbi_img = data.get('wbi_img', {})
@@ -269,7 +269,6 @@ class BilibiliClient:
         params: dict[str, Any] | None = None,
         *,
         wbi: bool = False,
-        check_code: bool = True,
     ) -> dict[str, Any]:
         """
         Make a GET request with optional WBI signing.
@@ -282,9 +281,6 @@ class BilibiliClient:
             Query parameters for the request.
         wbi : bool, optional
             Whether to apply WBI signing. Default is False.
-        check_code : bool, optional
-            Whether to check the API response code. Default is True.
-
         Returns
         -------
         dict[str, Any]
@@ -295,28 +291,21 @@ class BilibiliClient:
         requests.HTTPError
             If the HTTP request fails.
         BilibiliAPIError
-            If the API returns an error code (when check_code is True).
+            If the API returns an error code.
         """
-        self._rate_limit()
-
-        if params is None:
-            params = {}
-
+        self._prepare_session()
+        params = dict(params or {})
         if wbi:
             params = self._sign_wbi(params)
 
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
-        result: dict[str, Any] = resp.json()
-
-        if check_code:
-            code = result.get('code')
-            if code is not None and code != 0:
-                raise BilibiliAPIError(code, result.get('message', 'Unknown error'))
+        result: dict[str, Any] = self._request(url, params).json()
+        code = result['code']
+        if code != 0:
+            raise BilibiliAPIError(code, result.get('message', 'Unknown error'))
 
         return result
 
-    def _get_comments(
+    def get_comments(
         self,
         oid: int | str,
         type_: int,
@@ -324,27 +313,31 @@ class BilibiliClient:
         max_count: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """
-        Iterate over comments for a given object (video or dynamic).
+        Iterate over top-level comments with their complete reply lists.
 
         Parameters
         ----------
         oid : int or str
-            The object ID (aid for videos, dynamic_id for dynamics).
+            The comment object ID declared by the content API.
         type_ : int
-            The comment type (1 for videos, 17 for dynamics).
+            The comment type declared by the content API.
         page_size : int, optional
             Number of results per page. Default is 20.
         max_count : int or None, optional
-            Maximum number of comments to return. None for unlimited.
+            Maximum number of top-level comments. None for unlimited.
 
         Yields
         ------
         dict[str, Any]
             Comment info including member.mid, content, ctime, etc.
         """
+        if max_count == 0:
+            return
+
         url = 'https://api.bilibili.com/x/v2/reply/wbi/main'
         next_offset = None
         count = 0
+        seen: set[int] = set()
 
         while True:
             params: dict[str, Any] = {
@@ -357,19 +350,63 @@ class BilibiliClient:
                 params['next'] = next_offset
 
             data = self._get(url, params, wbi=True)
-            cursor = data.get('data', {}).get('cursor', {})
-            replies: list[dict[str, Any]] = data.get('data', {}).get('replies') or []
+            payload = data['data']
+            cursor = payload['cursor']
+            replies: list[dict[str, Any]] = [
+                *(payload.get('top_replies') or []),
+                *(payload.get('replies') or []),
+            ]
+            continuation = None
+            if not cursor['is_end']:
+                continuation = cursor['next']
+                if not continuation or continuation == next_offset:
+                    raise BilibiliAPIError(-1, 'Comment cursor did not advance')
 
             for reply in replies:
+                rpid = int(reply['rpid'])
+                if rpid in seen:
+                    continue
+                seen.add(rpid)
+                if reply.get('rcount', 0) > len(reply.get('replies') or []):
+                    reply = {
+                        **reply,
+                        'replies': list(
+                            self.get_comment_replies(oid, type_, reply['rpid'])
+                        ),
+                    }
                 yield reply
                 count += 1
                 if max_count and count >= max_count:
                     return
 
-            if not cursor.get('is_end', True):
-                next_offset = cursor.get('next')
-            else:
+            if cursor['is_end']:
                 break
+            next_offset = continuation
+
+    def get_comment_replies(
+        self, oid: int | str, type_: int, root: int | str, page_size: int = 20
+    ) -> Iterator[dict[str, Any]]:
+        """Iterate over all replies to a root comment using its declared object."""
+        url = 'https://api.bilibili.com/x/v2/reply/reply'
+        pn = 1
+        count = 0
+        while True:
+            result = self._get(
+                url,
+                {'oid': oid, 'type': type_, 'root': root, 'pn': pn, 'ps': page_size},
+            )
+            payload = result['data']
+            replies: list[dict[str, Any]] = payload.get('replies') or []
+            total = payload['page']['count']
+            if not replies and count < total:
+                raise BilibiliAPIError(
+                    -1, 'Comment replies ended before the reported total'
+                )
+            yield from replies
+            count += len(replies)
+            if count >= total:
+                return
+            pn += 1
 
     # --------------------------------------------------------------------------
     # Following / Relationship APIs
@@ -420,13 +457,12 @@ class BilibiliClient:
         -------
         dict[str, Any]
             Stats dict with keys: mid, following, whisper, black, follower.
-            Returns default values if the API returns no data.
         """
         url = 'https://api.bilibili.com/x/relation/stat'
         result = self._get(url, {'vmid': mid})
         data: dict[str, Any] | None = result.get('data')
         if data is None:
-            return {'mid': mid, 'follower': 0, 'following': 0}
+            raise BilibiliAPIError(-1, 'User statistics missing from API response')
         return data
 
     # --------------------------------------------------------------------------
@@ -453,6 +489,9 @@ class BilibiliClient:
         dict[str, Any]
             Video info including aid, title, created, etc.
         """
+        if max_count == 0:
+            return
+
         url = 'https://api.bilibili.com/x/space/wbi/arc/search'
         pn = 1
         count = 0
@@ -488,30 +527,6 @@ class BilibiliClient:
 
             pn += 1
 
-    def get_video_comments(
-        self, aid: int, page_size: int = 20, max_count: int | None = None
-    ) -> Iterator[dict[str, Any]]:
-        """
-        Iterate over comments on a video.
-
-        Parameters
-        ----------
-        aid : int
-            The video's archive ID (aid).
-        page_size : int, optional
-            Number of results per page. Default is 20.
-        max_count : int or None, optional
-            Maximum number of comments to return. None for unlimited.
-
-        Yields
-        ------
-        dict[str, Any]
-            Comment info including member.mid, content, ctime, etc.
-        """
-        yield from self._get_comments(
-            aid, type_=1, page_size=page_size, max_count=max_count
-        )
-
     # --------------------------------------------------------------------------
     # Dynamic APIs
     # --------------------------------------------------------------------------
@@ -529,30 +544,29 @@ class BilibiliClient:
 
         Common pattern for dynamic-related APIs that use offset + has_more pagination.
         """
+        if max_count == 0:
+            return
         offset = None
         count = 0
-
         while True:
             params = dict(base_params)
             if offset:
                 params['offset'] = offset
-
-            data = self._get(url, params, wbi=wbi)
-            items: list[dict[str, Any]] = data.get('data', {}).get('items') or []
-
-            if not items:
-                break
-
+            payload = self._get(url, params, wbi=wbi)['data']
+            items: list[dict[str, Any]] = payload.get('items') or []
+            continuation = None
+            if payload['has_more']:
+                continuation = payload['offset']
+                if not continuation or continuation == offset:
+                    raise BilibiliAPIError(-1, 'Dynamic cursor did not advance')
             for item in items:
                 yield item
                 count += 1
-                if max_count and count >= max_count:
+                if max_count is not None and count >= max_count:
                     return
-
-            if data.get('data', {}).get('has_more'):
-                offset = data['data'].get('offset')
-            else:
-                break
+            if not payload['has_more']:
+                return
+            offset = continuation
 
     def get_user_dynamics(
         self, mid: int, max_count: int | None = None
@@ -600,42 +614,11 @@ class BilibiliClient:
         url = 'https://api.bilibili.com/x/polymer/web-dynamic/v1/detail/reaction'
         yield from self._iterate_offset_paginated(url, {'id': dynamic_id}, max_count)
 
-    def get_dynamic_comments(
-        self,
-        dynamic: dict[str, Any],
-        page_size: int = 20,
-        max_count: int | None = None,
-    ) -> Iterator[dict[str, Any]]:
-        """
-        Get comments on a dynamic.
-
-        Parameters
-        ----------
-        dynamic : dict[str, Any]
-            Dynamic with comment object ID and type in its basic metadata.
-        page_size : int, optional
-            Number of results per page. Default is 20.
-        max_count : int or None, optional
-            Maximum number of comments to return. None for unlimited.
-
-        Yields
-        ------
-        dict[str, Any]
-            Comment info including member.mid, content, ctime, etc.
-        """
-        basic = dynamic['basic']
-        yield from self._get_comments(
-            basic['comment_id_str'],
-            type_=basic['comment_type'],
-            page_size=page_size,
-            max_count=max_count,
-        )
-
     def get_user_activity(self, mid: int, max_dynamics: int = 10) -> UserActivity:
         """
         Get user activity info for filtering purposes.
 
-        Fetches the user's recent dynamics and following count, returning a
+        Fetches the user's recent dynamics, returning a
         :class:`UserActivity` whose ``status`` distinguishes successful
         fetches from deactivated accounts and from transient failures
         (rate limit, risk-control, network error, etc.). Callers must
@@ -653,8 +636,6 @@ class BilibiliClient:
         UserActivity
             Activity info tagged with an :class:`ActivityStatus`.
         """
-        following_count = self.get_user_stat(mid).get('following', 0)
-
         try:
             dynamics = list(self.get_user_dynamics(mid, max_count=max_dynamics))
         except BilibiliAPIError as e:
@@ -670,13 +651,19 @@ class BilibiliClient:
             )
             return UserActivity(
                 status=status,
-                following_count=following_count,
                 error_code=e.code,
+            )
+
+        except requests.RequestException as error:
+            return UserActivity(
+                status=ActivityStatus.UNAVAILABLE,
+                error_code=(
+                    error.response.status_code if error.response is not None else None
+                ),
             )
 
         return UserActivity(
             status=ActivityStatus.OK,
-            following_count=following_count,
             total_dynamics=len(dynamics),
             repost_count=_count_reposts(dynamics),
             last_post_ts=_latest_post_ts(dynamics),
@@ -684,16 +671,13 @@ class BilibiliClient:
 
 
 def _latest_post_ts(dynamics: list[dict[str, Any]]) -> int | None:
-    """Return the publish timestamp of the most recent non-pinned dynamic."""
+    """Return the latest publish timestamp in the fetched sample."""
+    timestamps: list[int] = []
     for dynamic in dynamics:
-        modules: dict[str, Any] = dynamic.get('modules') or {}
-        tag: dict[str, Any] = modules.get('module_tag') or {}
-        if tag.get('text') == '置顶':
-            continue
-        author: dict[str, Any] = modules.get('module_author') or {}
-        pub_ts = author.get('pub_ts')
-        return int(pub_ts) if pub_ts is not None else None
-    return None
+        author = (dynamic.get('modules') or {}).get('module_author') or {}
+        if author.get('pub_ts') is not None:
+            timestamps.append(int(author['pub_ts']))
+    return max(timestamps, default=None)
 
 
 def _count_reposts(dynamics: list[dict[str, Any]]) -> int:

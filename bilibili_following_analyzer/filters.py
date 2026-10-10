@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
 from .cache import (
     TTL_USER_ACTIVITY,
@@ -19,34 +20,27 @@ from .client import ActivityStatus, BilibiliClient, UserActivity
 
 
 @dataclass
-class MatchInfo:
-    """
-    Result of a filter match operation.
+class FilterMatch:
+    """A matched leaf filter and its explanation."""
 
-    Attributes
-    ----------
-    matched : bool
-        Whether the filter matched.
-    detail : str or None
-        Human-readable explanation of why the filter matched.
-    filter_names : list[str]
-        Names of the filters that matched (for composite filters, includes all
-        sub-filters that contributed to the match).
-    """
+    name: str
+    detail: str | None = None
+
+
+@dataclass
+class MatchInfo:
+    """A filter decision with the contributing leaf matches."""
 
     matched: bool
-    detail: str | None = None
-    filter_names: list[str] = field(default_factory=list)
+    matches: list[FilterMatch] = field(default_factory=list)
 
     @classmethod
-    def no_match(cls) -> Self:
-        """Create a non-matching result."""
+    def no_match(cls) -> MatchInfo:
         return cls(matched=False)
 
     @classmethod
-    def match(cls, filter_name: str, detail: str | None = None) -> Self:
-        """Create a matching result for a single filter."""
-        return cls(matched=True, detail=detail, filter_names=[filter_name])
+    def match(cls, filter_name: str, detail: str | None = None) -> MatchInfo:
+        return cls(matched=True, matches=[FilterMatch(filter_name, detail)])
 
 
 @dataclass
@@ -63,22 +57,22 @@ class FilterContext:
         The API client for fetching additional data.
     my_mid : int
         The user's own member ID.
-    interacting_users : set[int]
-        Set of user IDs who have interacted with recent content.
+    interacting_users : set[int] or None
+        Collected user IDs, or None when interactions were not collected.
     cache : CachedDataFetcher
         Disk cache for persistent storage across runs.
     user_stats : dict[int, dict]
         In-memory cache for user stats (hot cache for current session).
-    user_activity : dict[int, UserActivity]
+    user_activity : dict[tuple[int, int], UserActivity]
         In-memory cache for user activity (hot cache for current session).
     """
 
     client: BilibiliClient
     my_mid: int
-    interacting_users: set[int] = field(default_factory=set)
+    interacting_users: set[int] | None = None
     cache: CachedDataFetcher = field(default_factory=CachedDataFetcher)
     user_stats: dict[int, dict[str, Any]] = field(default_factory=dict)
-    user_activity: dict[int, UserActivity] = field(default_factory=dict)
+    user_activity: dict[tuple[int, int], UserActivity] = field(default_factory=dict)
 
     def get_user_stat(self, mid: int) -> dict[str, Any]:
         """
@@ -104,16 +98,18 @@ class FilterContext:
 
         First checks in-memory cache, then disk cache, then fetches from API.
         """
-        if mid in self.user_activity:
-            return self.user_activity[mid]
+        sample = (mid, max_dynamics)
+        if sample in self.user_activity:
+            return self.user_activity[sample]
 
-        key = make_user_activity_key(mid)
+        key = make_user_activity_key(mid, self.my_mid, max_dynamics)
         activity = self.cache.get_or_fetch(
             key,
             lambda: self.client.get_user_activity(mid, max_dynamics=max_dynamics),
             TTL_USER_ACTIVITY,
+            cache_if=lambda value: value.status != ActivityStatus.UNAVAILABLE,
         )
-        self.user_activity[mid] = activity
+        self.user_activity[sample] = activity
         return activity
 
 
@@ -149,28 +145,10 @@ class Following:
 
 @dataclass
 class FilterResult:
-    """
-    Result of applying filters to a user.
-
-    Attributes
-    ----------
-    following : Following
-        The user that was filtered.
-    matched_filters : list[str]
-        Names of filters that matched this user.
-    details : dict[str, str]
-        Additional details from each matched filter.
-    """
+    """A following and the leaf filters that selected it."""
 
     following: Following
-    matched_filters: list[str] = field(default_factory=list)
-    details: dict[str, str] = field(default_factory=dict)
-
-    def add_match(self, filter_name: str, detail: str | None = None) -> None:
-        """Record a filter match."""
-        self.matched_filters.append(filter_name)
-        if detail:
-            self.details[filter_name] = detail
+    matches: list[FilterMatch] = field(default_factory=list)
 
 
 class Filter(ABC):
@@ -204,18 +182,24 @@ class Filter(ABC):
         """Parse and validate an integer parameter."""
         param = cls._require_param(param)
         try:
-            return int(param)
+            value = int(param)
         except ValueError:
             raise ValueError(f'Filter {cls.name!r} requires an integer') from None
+        if value < 0:
+            raise ValueError(f'Filter {cls.name!r} requires a nonnegative integer')
+        return value
 
     @classmethod
     def _parse_float_param(cls, param: str | None) -> float:
         """Parse and validate a float parameter."""
         param = cls._require_param(param)
         try:
-            return float(param)
+            value = float(param)
         except ValueError:
             raise ValueError(f'Filter {cls.name!r} requires a number') from None
+        if not math.isfinite(value):
+            raise ValueError(f'Filter {cls.name!r} requires a finite number')
+        return value
 
     @classmethod
     def create(cls, param: str | None = None) -> Filter:
@@ -317,7 +301,7 @@ class _ThresholdStatFilter(Filter):
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         stat = ctx.get_user_stat(following.mid)
-        value = stat.get(self.stat_field, 0)
+        value = stat[self.stat_field]
         if self.compare_above:
             matched = value > self.threshold
         else:
@@ -356,7 +340,10 @@ class NoInteractionFilter(Filter):
     description = 'Users who have not interacted with your recent content'
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
-        if following.mid not in ctx.interacting_users:
+        if (
+            ctx.interacting_users is not None
+            and following.mid not in ctx.interacting_users
+        ):
             return MatchInfo.match(self.name, '无近期互动')
         return MatchInfo.no_match()
 
@@ -404,7 +391,7 @@ class InactiveFilter(Filter):
         if activity.last_post_ts is not None:
             now_ts = int(time.time())
             days_since_post = (now_ts - activity.last_post_ts) // 86400
-            if days_since_post > self.days:
+            if now_ts - activity.last_post_ts >= self.days * 86400:
                 return MatchInfo.match(self.name, f'超过 {days_since_post} 天未更新')
 
         return MatchInfo.no_match()
@@ -414,7 +401,7 @@ class RepostRatioFilter(Filter):
     """Filter users whose recent posts are mostly reposts."""
 
     name = 'repost-ratio'
-    description = 'Users whose repost ratio exceeds RATIO (0.0-1.0)'
+    description = 'Users whose plain repost ratio is at least RATIO (0.0-1.0)'
     has_param = True
     param_help = 'RATIO (e.g., 0.8 for 80%)'
 
@@ -423,7 +410,10 @@ class RepostRatioFilter(Filter):
 
     @classmethod
     def create(cls, param: str | None = None) -> Filter:
-        return cls(cls._parse_float_param(param))
+        ratio = cls._parse_float_param(param)
+        if not 0 <= ratio <= 1:
+            raise ValueError(f'Filter {cls.name!r} requires a ratio between 0 and 1')
+        return cls(ratio)
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
@@ -484,22 +474,13 @@ class AndFilter(Filter):
         self.filters = filters
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
-        all_details: list[str] = []
-        all_filter_names: list[str] = []
-
-        for f in self.filters:
-            result = f.matches(following, ctx)
+        matches: list[FilterMatch] = []
+        for filter_ in self.filters:
+            result = filter_.matches(following, ctx)
             if not result.matched:
                 return MatchInfo.no_match()
-            if result.detail:
-                all_details.append(result.detail)
-            all_filter_names.extend(result.filter_names)
-
-        return MatchInfo(
-            matched=True,
-            detail='; '.join(all_details) if all_details else None,
-            filter_names=all_filter_names,
-        )
+            matches.extend(result.matches)
+        return MatchInfo(matched=True, matches=matches)
 
 
 class OrFilter(Filter):
@@ -516,23 +497,14 @@ class OrFilter(Filter):
         self.filters = filters
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
-        all_details: list[str] = []
-        all_filter_names: list[str] = []
-
-        for f in self.filters:
-            result = f.matches(following, ctx)
+        matches: list[FilterMatch] = []
+        matched = False
+        for filter_ in self.filters:
+            result = filter_.matches(following, ctx)
             if result.matched:
-                if result.detail:
-                    all_details.append(result.detail)
-                all_filter_names.extend(result.filter_names)
-
-        if all_filter_names:
-            return MatchInfo(
-                matched=True,
-                detail='; '.join(all_details) if all_details else None,
-                filter_names=all_filter_names,
-            )
-        return MatchInfo.no_match()
+                matched = True
+                matches.extend(result.matches)
+        return MatchInfo(matched=matched, matches=matches)
 
 
 # -----------------------------------------------------------------------------

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
+import requests
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -19,12 +21,14 @@ from .cache import (
     get_cache,
     get_cache_dir,
 )
-from .client import ActivityStatus, BilibiliClient, UserActivity
+from .client import ActivityStatus, BilibiliAPIError, BilibiliClient, UserActivity
 from .filters import (
+    AndFilter,
     Filter,
     FilterContext,
     FilterResult,
     Following,
+    OrFilter,
     get_filter_help,
     parse_filter_expression,
     parse_filter_spec,
@@ -77,54 +81,6 @@ def _purge_unavailable_activity(cache_fetcher: CachedDataFetcher) -> int:
     return purged
 
 
-T = TypeVar('T')
-
-
-def _env_parse(name: str, default: T, parser: Callable[[str], T], type_name: str) -> T:
-    """
-    Parse an environment variable with a type converter.
-
-    Parameters
-    ----------
-    name : str
-        The environment variable name.
-    default : T
-        The default value if the variable is not set or empty.
-    parser : Callable[[str], T]
-        Function to convert string to the desired type.
-    type_name : str
-        Human-readable type name for error messages.
-
-    Returns
-    -------
-    T
-        The parsed value.
-
-    Raises
-    ------
-    SystemExit
-        If the value is set but cannot be parsed.
-    """
-    val = os.environ.get(name)
-    if not val:
-        return default
-    try:
-        return parser(val)
-    except ValueError:
-        msg = f'Error: {name} must be a valid {type_name}, got {val!r}'
-        raise SystemExit(msg) from None
-
-
-def _env_int(name: str, default: int) -> int:
-    """Get an integer from an environment variable with a default."""
-    return _env_parse(name, default, int, 'integer')
-
-
-def _env_float(name: str, default: float) -> float:
-    """Get a float from an environment variable with a default."""
-    return _env_parse(name, default, float, 'number')
-
-
 def _env_list(name: str) -> list[str]:
     """
     Get a list from an environment variable (comma-separated).
@@ -160,7 +116,7 @@ class FilterHelpAction(argparse.Action):
         sys.exit(0)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
     Parse command-line arguments.
 
@@ -196,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--delay',
         type=float,
-        default=_env_float('DELAY', 0.3),
+        default=os.environ.get('DELAY', '0.3'),
         help='Delay between API requests in seconds (default: 0.3). Env: DELAY',
     )
     parser.add_argument(
@@ -260,13 +216,13 @@ def parse_args() -> argparse.Namespace:
     interaction_group.add_argument(
         '--num-videos',
         type=int,
-        default=_env_int('NUM_VIDEOS', 10),
+        default=os.environ.get('NUM_VIDEOS', '10'),
         help='Number of recent videos to check for interactions. Env: NUM_VIDEOS',
     )
     interaction_group.add_argument(
         '--num-dynamics',
         type=int,
-        default=_env_int('NUM_DYNAMICS', 20),
+        default=os.environ.get('NUM_DYNAMICS', '20'),
         help='Number of recent dynamics to check for interactions. Env: NUM_DYNAMICS',
     )
 
@@ -300,10 +256,27 @@ def parse_args() -> argparse.Namespace:
         help=f'Custom cache directory (default: {get_cache_dir()})',
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.filter_mode not in ('and', 'or'):
+        parser.error('--filter-mode must be and or or')
+    if not math.isfinite(args.delay) or args.delay < 0:
+        parser.error('--delay must be a finite nonnegative number')
+    if args.mid is not None and args.mid <= 0:
+        parser.error('--mid must be a positive integer')
+    for name in ('limit', 'num_videos', 'num_dynamics'):
+        value = getattr(args, name)
+        if value is not None and value < 0:
+            parser.error(f'--{name.replace("_", "-")} must be a nonnegative integer')
     if args.filters is None and args.filter_expr is None:
         args.filter_expr = os.environ.get('FILTER_EXPR')
     return args
+
+
+def _comment_user_ids(comments: Iterable[dict[str, Any]]) -> Iterator[int]:
+    """Yield authors of comments and the nested replies included in the response."""
+    for comment in comments:
+        yield int(comment['member']['mid'])
+        yield from _comment_user_ids(comment.get('replies') or [])
 
 
 def _collect_video_interactions(
@@ -329,8 +302,7 @@ def _collect_video_interactions(
     videos = list(client.get_user_videos(mid, max_count=num_videos))
     for video in tqdm(videos, desc='Videos', unit='video'):
         aid = video['aid']
-        for comment in client.get_video_comments(aid, max_count=100):
-            users.add(int(comment['member']['mid']))
+        users.update(_comment_user_ids(client.get_comments(aid, type_=1)))
 
 
 def _collect_dynamic_interactions(
@@ -353,8 +325,6 @@ def _collect_dynamic_interactions(
     users : set[int]
         Set to add interacting user IDs to (modified in place).
     """
-    from .client import BilibiliAPIError
-
     dynamics = list(client.get_user_dynamics(mid, max_count=num_dynamics))
     for dynamic in tqdm(dynamics, desc='Dynamics', unit='dyn'):
         dynamic_id = dynamic['id_str']
@@ -363,15 +333,15 @@ def _collect_dynamic_interactions(
         for reaction in client.get_dynamic_reactions(dynamic_id):
             users.add(int(reaction['mid']))
 
-        # Get comments (some dynamic types don't support comments)
-        try:
-            for comment in client.get_dynamic_comments(dynamic, max_count=100):
-                users.add(int(comment['member']['mid']))
-        except BilibiliAPIError as e:
-            if e.code == -404:
-                pass  # Dynamic has no comment section
-            else:
-                raise
+        basic = dynamic['basic']
+        if basic['comment_type']:
+            users.update(
+                _comment_user_ids(
+                    client.get_comments(
+                        basic['comment_id_str'], type_=basic['comment_type']
+                    )
+                )
+            )
 
 
 def collect_interacting_users(
@@ -411,97 +381,15 @@ def collect_interacting_users(
 
 
 def apply_filters(
-    followings: list[Following],
-    filters: list[Filter],
-    ctx: FilterContext,
-    mode: str,
+    followings: list[Following], filter_obj: Filter, ctx: FilterContext
 ) -> list[FilterResult]:
-    """
-    Apply filters to a list of followings (simple mode).
-
-    Parameters
-    ----------
-    followings : list[Following]
-        The users to filter.
-    filters : list[Filter]
-        The filters to apply.
-    ctx : FilterContext
-        Shared context for filter evaluation.
-    mode : str
-        'and' (all filters must match) or 'or' (any filter matches).
-
-    Returns
-    -------
-    list[FilterResult]
-        Results for users who matched the filter criteria.
-    """
+    """Evaluate a filter tree and preserve each contributing leaf match."""
     results: list[FilterResult] = []
-
-    print(f'Applying {len(filters)} filter(s) in {mode.upper()} mode...')
-
     for following in tqdm(followings, desc='Filtering', unit='user'):
-        result = FilterResult(following=following)
-
-        for f in filters:
-            match_info = f.matches(following, ctx)
-            if match_info.matched:
-                result.add_match(f.name, match_info.detail)
-
-        # Determine if this user should be included in results
-        if mode == 'and':
-            # All filters must match
-            if len(result.matched_filters) == len(filters):
-                results.append(result)
-        else:  # mode == 'or'
-            # Any filter matches
-            if result.matched_filters:
-                results.append(result)
-
+        result = filter_obj.matches(following, ctx)
+        if result.matched:
+            results.append(FilterResult(following, result.matches))
     print(f'  Found {len(results)} matching users')
-
-    return results
-
-
-def apply_filter_expression(
-    followings: list[Following],
-    composite_filter: Filter,
-    ctx: FilterContext,
-) -> list[FilterResult]:
-    """
-    Apply a composite filter expression to a list of followings.
-
-    Parameters
-    ----------
-    followings : list[Following]
-        The users to filter.
-    composite_filter : Filter
-        A composite filter (AndFilter / OrFilter) representing the expression.
-    ctx : FilterContext
-        Shared context for filter evaluation.
-
-    Returns
-    -------
-    list[FilterResult]
-        Results for users who matched the filter expression.
-    """
-    results: list[FilterResult] = []
-
-    print('Applying filter expression...')
-
-    for following in tqdm(followings, desc='Filtering', unit='user'):
-        match_info = composite_filter.matches(following, ctx)
-        if match_info.matched:
-            result = FilterResult(following=following)
-            # Add each matched filter individually
-            for filter_name in match_info.filter_names:
-                result.add_match(filter_name, None)
-            # Store the combined detail under a special key for display
-            if match_info.detail:
-                result.details['_combined'] = match_info.detail
-            results.append(result)
-
-    print(f'  Found {len(results)} matching users')
-
     return results
 
 
@@ -560,6 +448,8 @@ def _fetch_followings(
     """Fetch followings and filter by allow list."""
     print('Fetching followings...')
     followings: list[Following] = []
+    if limit == 0:
+        return followings
     for f in client.get_followings(mid):
         user_mid = int(f['mid'])
         if user_mid in allow_list:
@@ -575,8 +465,6 @@ def _fetch_followings(
 
 def _needs_interaction_data(filter_obj: Filter) -> bool:
     """Check if a filter (possibly composite) needs interaction data."""
-    from .filters import AndFilter, OrFilter
-
     if filter_obj.name == 'no-interaction':
         return True
     if isinstance(filter_obj, (AndFilter, OrFilter)):
@@ -586,52 +474,31 @@ def _needs_interaction_data(filter_obj: Filter) -> bool:
 
 def _run_analysis(
     args: argparse.Namespace,
-    filters: list[Filter] | None,
-    composite_filter: Filter | None,
+    filter_obj: Filter,
     cache_fetcher: CachedDataFetcher,
     allow_list: set[int],
 ) -> list[FilterResult]:
-    """
-    Run the main analysis with the API client.
-
-    Either filters (simple mode) or composite_filter (expression mode) should be set.
-    """
-    # Check if we need interaction data
-    if composite_filter:
-        needs_interactions = _needs_interaction_data(composite_filter)
-    else:
-        needs_interactions = any(f.name == 'no-interaction' for f in (filters or []))
+    """Collect the data required by a filter tree and evaluate followings."""
+    needs_interactions = _needs_interaction_data(filter_obj)
+    if needs_interactions and args.num_videos + args.num_dynamics == 0:
+        raise ValueError('no-interaction requires a nonempty video or dynamic sample')
 
     with BilibiliClient(sessdata=args.sessdata, delay=args.delay) as client:
-        # Collect interacting users if needed
-        interacting_users: set[int] = set()
+        interacting_users = None
         if needs_interactions:
-            total_posts = args.num_videos + args.num_dynamics
-            if total_posts > 0:
-                interacting_users = collect_interacting_users(
-                    client,
-                    args.mid,
-                    args.num_videos,
-                    args.num_dynamics,
-                )
-                print(f'\nFound {len(interacting_users)} unique users who interacted')
+            interacting_users = collect_interacting_users(
+                client, args.mid, args.num_videos, args.num_dynamics
+            )
+            print(f'\nFound {len(interacting_users)} unique users who interacted')
 
-        # Build filter context
         ctx = FilterContext(
             client=client,
             my_mid=args.mid,
             interacting_users=interacting_users,
             cache=cache_fetcher,
         )
-
-        # Fetch followings and apply filters
         followings = _fetch_followings(client, args.mid, allow_list, args.limit)
-
-        if composite_filter:
-            results = apply_filter_expression(followings, composite_filter, ctx)
-        else:
-            results = apply_filters(followings, filters or [], ctx, args.filter_mode)
-
+        results = apply_filters(followings, filter_obj, ctx)
         _report_activity_failures(ctx)
         return results
 
@@ -648,36 +515,30 @@ def main() -> None:
     if not args.mid:
         raise SystemExit('Error: --mid is required (or set MID in .env)')
 
-    # Parse filters (expression mode or simple mode)
-    filters: list[Filter] | None = None
-    composite_filter: Filter | None = None
-
-    if args.filter_expr:
-        # Expression mode: parse complex filter expression
-        try:
-            composite_filter = parse_filter_expression(args.filter_expr)
+    try:
+        if args.filter_expr:
+            filter_obj = parse_filter_expression(args.filter_expr)
             print(f'Filter expression: {args.filter_expr}')
-        except ValueError as e:
-            raise SystemExit(f'Error parsing filter expression: {e}') from None
-    else:
-        # Simple mode: use -f/--filter options
-        filter_specs = _collect_filter_specs(args)
-        filters = _parse_filters(filter_specs)
-        filter_names = ', '.join(f.name for f in filters)
-        print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
+        else:
+            filters = _parse_filters(_collect_filter_specs(args))
+            filter_obj = (
+                AndFilter(filters) if args.filter_mode == 'and' else OrFilter(filters)
+            )
+            filter_names = ', '.join(filter_.name for filter_ in filters)
+            print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
+        allow_list = load_allow_list(args.allow_list)
+    except ValueError as error:
+        raise SystemExit(f'Error: {error}') from None
 
-    # Initialize cache and load allow list
-    cache_fetcher = _setup_cache(args)
-    allow_list = load_allow_list(args.allow_list)
     if allow_list:
         print(f'Loaded {len(allow_list)} users in allow list')
-
+    cache_fetcher = _setup_cache(args)
     try:
-        results = _run_analysis(
-            args, filters, composite_filter, cache_fetcher, allow_list
-        )
+        results = _run_analysis(args, filter_obj, cache_fetcher, allow_list)
         print_filter_results(results)
         if args.output:
             output_results_to_file(results, args.output)
+    except (ValueError, BilibiliAPIError, requests.RequestException) as error:
+        raise SystemExit(f'Error: {error}') from None
     finally:
         cache_fetcher.close()
