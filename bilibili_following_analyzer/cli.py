@@ -365,7 +365,7 @@ def _collect_dynamic_interactions(
 
         # Get comments (some dynamic types don't support comments)
         try:
-            for comment in client.get_dynamic_comments(dynamic_id, max_count=100):
+            for comment in client.get_dynamic_comments(dynamic, max_count=100):
                 users.add(int(comment['member']['mid']))
         except BilibiliAPIError as e:
             if e.code == -404:

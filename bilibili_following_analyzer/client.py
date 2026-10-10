@@ -601,15 +601,18 @@ class BilibiliClient:
         yield from self._iterate_offset_paginated(url, {'id': dynamic_id}, max_count)
 
     def get_dynamic_comments(
-        self, dynamic_id: str, page_size: int = 20, max_count: int | None = None
+        self,
+        dynamic: dict[str, Any],
+        page_size: int = 20,
+        max_count: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """
         Get comments on a dynamic.
 
         Parameters
         ----------
-        dynamic_id : str
-            The dynamic's ID string.
+        dynamic : dict[str, Any]
+            Dynamic with comment object ID and type in its basic metadata.
         page_size : int, optional
             Number of results per page. Default is 20.
         max_count : int or None, optional
@@ -620,8 +623,12 @@ class BilibiliClient:
         dict[str, Any]
             Comment info including member.mid, content, ctime, etc.
         """
+        basic = dynamic['basic']
         yield from self._get_comments(
-            dynamic_id, type_=17, page_size=page_size, max_count=max_count
+            basic['comment_id_str'],
+            type_=basic['comment_type'],
+            page_size=page_size,
+            max_count=max_count,
         )
 
     def get_user_activity(self, mid: int, max_dynamics: int = 10) -> UserActivity:
