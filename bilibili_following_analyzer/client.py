@@ -211,7 +211,7 @@ class BilibiliClient:
 
         resp = self.session.get('https://api.bilibili.com/x/web-interface/nav')
         resp.raise_for_status()
-        result = resp.json()
+        result: dict[str, Any] = resp.json()
 
         # Validate API response
         code = result.get('code', -1)
@@ -310,7 +310,7 @@ class BilibiliClient:
 
         resp = self.session.get(url, params=params)
         resp.raise_for_status()
-        result = resp.json()
+        result: dict[str, Any] = resp.json()
 
         if check_code:
             code = result.get('code')
@@ -427,7 +427,7 @@ class BilibiliClient:
         """
         url = 'https://api.bilibili.com/x/relation/stat'
         result = self._get(url, {'vmid': mid})
-        data = result.get('data')
+        data: dict[str, Any] | None = result.get('data')
         if data is None:
             return {'mid': mid, 'follower': 0, 'following': 0}
         return data
@@ -473,6 +473,7 @@ class BilibiliClient:
                 'order_avoided': 'true',
                 'dm_img_list': '[]',
                 'dm_img_str': 'V2ViR0wgMS',
+                # cspell:disable-next-line
                 'dm_cover_img_str': 'SW50ZWwoUikgSEQgR3JhcGhpY3NJbnRlbA',
                 'dm_img_inter': '{"ds":[],"wh":[0,0,0],"of":[0,0,0]}',
             }

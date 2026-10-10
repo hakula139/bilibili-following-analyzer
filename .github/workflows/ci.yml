@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    name: Nix Flake Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Check
+        run: nix flake check --print-build-logs
+
+  python:
+    name: Python Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Install dependencies
+        run: nix develop .#python -c uv sync --locked
+
+      - name: Lint
+        run: nix develop .#python -c uv run --no-sync ruff check
+
+      - name: Format
+        run: nix develop .#python -c uv run --no-sync ruff format --check
+
+      - name: Type check
+        run: nix develop .#python -c uv run --no-sync mypy
+
+      - name: Security lint
+        run: nix develop .#python -c uv run --no-sync bandit -r bilibili_following_analyzer/
+
+      - name: Test
+        run: nix develop .#python -c uv run --no-sync pytest -q

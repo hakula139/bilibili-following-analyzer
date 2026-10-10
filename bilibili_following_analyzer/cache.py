@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import diskcache
 import platformdirs
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from diskcache import Cache
+
+
+T = TypeVar('T')
 
 
 # Default TTLs in seconds
@@ -101,9 +106,9 @@ class CachedDataFetcher:
     def get_or_fetch(
         self,
         key: str,
-        fetcher: Any,
+        fetcher: Callable[[], T],
         ttl: int,
-    ) -> Any:
+    ) -> T:
         """
         Get value from cache or fetch it.
 
@@ -111,14 +116,14 @@ class CachedDataFetcher:
         ----------
         key : str
             The cache key.
-        fetcher : callable
+        fetcher : Callable[[], T]
             Function to call if cache miss. Should return the value to cache.
         ttl : int
             Time-to-live in seconds.
 
         Returns
         -------
-        Any
+        T
             The cached or freshly fetched value.
         """
         if self.cache is None:
@@ -126,7 +131,7 @@ class CachedDataFetcher:
 
         value = self.cache.get(key)
         if value is not None:
-            return value
+            return cast(T, value)
 
         value = fetcher()
         self.cache.set(key, value, expire=ttl)
