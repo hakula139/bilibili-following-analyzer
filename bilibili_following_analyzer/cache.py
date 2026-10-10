@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TypeVar, cast
 
-import diskcache
 import platformdirs
+from diskcache import Cache
 
 
-if TYPE_CHECKING:
-    from diskcache import Cache
+T = TypeVar('T')
 
 
 # Default TTLs in seconds
@@ -57,7 +57,7 @@ def get_cache(directory: Path | None = None) -> Cache:
     """
     cache_dir = directory or get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return diskcache.Cache(str(cache_dir), size_limit=CACHE_SIZE_LIMIT)
+    return Cache(str(cache_dir), size_limit=CACHE_SIZE_LIMIT)
 
 
 def make_user_stat_key(mid: int) -> str:
@@ -101,9 +101,9 @@ class CachedDataFetcher:
     def get_or_fetch(
         self,
         key: str,
-        fetcher: Any,
+        fetcher: Callable[[], T],
         ttl: int,
-    ) -> Any:
+    ) -> T:
         """
         Get value from cache or fetch it.
 
@@ -111,14 +111,14 @@ class CachedDataFetcher:
         ----------
         key : str
             The cache key.
-        fetcher : callable
+        fetcher : Callable[[], T]
             Function to call if cache miss. Should return the value to cache.
         ttl : int
             Time-to-live in seconds.
 
         Returns
         -------
-        Any
+        T
             The cached or freshly fetched value.
         """
         if self.cache is None:
@@ -126,7 +126,7 @@ class CachedDataFetcher:
 
         value = self.cache.get(key)
         if value is not None:
-            return value
+            return cast(T, value)
 
         value = fetcher()
         self.cache.set(key, value, expire=ttl)

@@ -5,11 +5,8 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-
-if TYPE_CHECKING:
-    from .filters import FilterResult
+from .filters import FilterResult
 
 
 def load_allow_list(path: Path | None) -> set[int]:

@@ -6,7 +6,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import Any, ClassVar, Self
 
 from .cache import (
     TTL_USER_ACTIVITY,
@@ -15,11 +15,7 @@ from .cache import (
     make_user_activity_key,
     make_user_stat_key,
 )
-from .client import ActivityStatus, UserActivity
-
-
-if TYPE_CHECKING:
-    from .client import BilibiliClient
+from .client import ActivityStatus, BilibiliClient, UserActivity
 
 
 @dataclass

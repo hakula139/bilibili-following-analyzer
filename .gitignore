@@ -4,27 +4,47 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-dist/
 *.egg-info/
 .eggs/
 
-# Virtual environments
-venv/
+# Build output
+build/
+dist/
+
+# Nix
+.direnv/
+.pre-commit-config.yaml
+result
+result-*
+
+# Environment
+.env
+.env.local
+.envrc.local
 .venv/
+venv/
 env/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# Caches
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# OS files
+.DS_Store
 
 # User-specific data
 allow_list.txt
 results.json
-.env
 
-# Local cache (if using --cache-dir .cache)
-.cache/
+# Editor / assistant local settings
+.idea/
+*.swp
+*.swo
+*~
+.agents/plans
+.claude/agent-memory-local
+.claude/plans
+.claude/settings.local.json
+.claude/worktrees
