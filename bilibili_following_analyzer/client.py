@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
 from functools import reduce
 from hashlib import md5
 from http.cookiejar import Cookie, CookieJar
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import requests
-
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
 class ActivityStatus(Enum):

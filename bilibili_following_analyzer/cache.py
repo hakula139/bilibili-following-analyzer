@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TypeVar, cast
 
-import diskcache
 import platformdirs
-
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from diskcache import Cache
+from diskcache import Cache
 
 
 T = TypeVar('T')
@@ -62,7 +57,7 @@ def get_cache(directory: Path | None = None) -> Cache:
     """
     cache_dir = directory or get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    return diskcache.Cache(str(cache_dir), size_limit=CACHE_SIZE_LIMIT)
+    return Cache(str(cache_dir), size_limit=CACHE_SIZE_LIMIT)
 
 
 def make_user_stat_key(mid: int) -> str:
