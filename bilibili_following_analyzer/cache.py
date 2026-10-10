@@ -65,16 +65,12 @@ def make_user_stat_key(mid: int) -> str:
     return f'user_stat:{mid}'
 
 
-USER_ACTIVITY_KEY_PREFIX = 'user_activity_v2:'
+USER_ACTIVITY_KEY_PREFIX = 'user_activity_v3:'
 
 
-def make_user_activity_key(mid: int) -> str:
-    """Generate cache key for user activity data.
-
-    The ``v2`` suffix avoids unpickling pre-refactor dict-shaped entries
-    into the current ``UserActivity`` consumer code path.
-    """
-    return f'{USER_ACTIVITY_KEY_PREFIX}{mid}'
+def make_user_activity_key(mid: int, observer_mid: int, max_dynamics: int) -> str:
+    """Identify an activity sample within the observer's API visibility."""
+    return f'{USER_ACTIVITY_KEY_PREFIX}{observer_mid}:{mid}:{max_dynamics}'
 
 
 class CachedDataFetcher:
@@ -103,6 +99,8 @@ class CachedDataFetcher:
         key: str,
         fetcher: Callable[[], T],
         ttl: int,
+        *,
+        cache_if: Callable[[T], bool] | None = None,
     ) -> T:
         """
         Get value from cache or fetch it.
@@ -115,6 +113,8 @@ class CachedDataFetcher:
             Function to call if cache miss. Should return the value to cache.
         ttl : int
             Time-to-live in seconds.
+        cache_if : Callable[[T], bool] or None, optional
+            Predicate deciding whether a fetched value may be persisted.
 
         Returns
         -------
@@ -129,7 +129,8 @@ class CachedDataFetcher:
             return cast(T, value)
 
         value = fetcher()
-        self.cache.set(key, value, expire=ttl)
+        if cache_if is None or cache_if(value):
+            self.cache.set(key, value, expire=ttl)
         return value
 
     def clear(self) -> None:

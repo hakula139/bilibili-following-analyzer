@@ -31,7 +31,7 @@ MID=12345
 SESSDATA="your_sessdata_here"
 ```
 
-All options can be set via `.env` or CLI arguments. CLI arguments override `.env` values.
+Options with an environment variable in the table below can be set via `.env`. CLI arguments override `.env` values.
 
 ## Usage
 
@@ -47,18 +47,18 @@ uv run python -m bilibili_following_analyzer -f <filter> [OPTIONS]
 
 Use `--list-filters` to see all available filters:
 
-| Filter                  | Description                                           |
-| ----------------------- | ----------------------------------------------------- |
-| `not-following-back`    | Users who don't follow you back                       |
-| `mutual`                | Users who follow you back (mutual follows)            |
-| `below-followers:N`     | Users with fewer than N followers                     |
-| `above-followers:N`     | Users with more than N followers                      |
-| `no-interaction`        | Users who haven't interacted with your recent content |
-| `too-many-followings:N` | Users following more than N accounts                  |
-| `inactive:DAYS`         | Users who haven't posted in DAYS                      |
-| `repost-ratio:RATIO`    | Users whose repost ratio exceeds RATIO (0.0-1.0)      |
-| `deactivated`           | Users with deactivated or inaccessible accounts       |
-| `no-posts`              | Users who have no posts at all                        |
+| Filter                  | Description                                                              |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `not-following-back`    | Users who don't follow you back                                          |
+| `mutual`                | Users who follow you back (mutual follows)                               |
+| `below-followers:N`     | Users with fewer than N followers                                        |
+| `above-followers:N`     | Users with more than N followers                                         |
+| `no-interaction`        | Users with no comments, dynamic likes or forwards on the sampled content |
+| `too-many-followings:N` | Users following more than N accounts                                     |
+| `inactive:DAYS`         | Users who haven't posted in DAYS                                         |
+| `repost-ratio:RATIO`    | Users whose plain repost ratio is at least RATIO (0.0-1.0)               |
+| `deactivated`           | Users with deactivated or inaccessible accounts                          |
+| `no-posts`              | Users who have no posts at all                                           |
 
 ### Options
 
@@ -77,6 +77,7 @@ Use `--list-filters` to see all available filters:
 | `-o, --output`   | `OUTPUT`       | -       | Output results to file (.txt, .json, .csv)              |
 | `--no-cache`     | -              | -       | Disable disk caching (in-memory only)                   |
 | `--clear-cache`  | -              | -       | Clear cached data before running                        |
+| `--retry-failed` | -              | -       | Evict previously cached unavailable activity            |
 | `--cache-dir`    | -              | (auto)  | Custom cache directory                                  |
 
 ### Examples
@@ -87,7 +88,7 @@ Find users who don't follow back AND have few followers:
 uv run bilibili-analyzer -f not-following-back -f below-followers:5000
 ```
 
-Find inactive mutual followers (OR mode - any filter matches):
+Find inactive accounts or accounts with no posts (OR mode):
 
 ```bash
 uv run bilibili-analyzer -f inactive:365 -f no-posts --filter-mode or
@@ -115,8 +116,8 @@ Complex filter expression with nested logic:
 # 2. Mutual followers who don't interact AND are problematic
 # 3. Deactivated accounts
 uv run bilibili-analyzer --filter-expr \
-  '(not-following-back + below-followers:5000) | \
-   (mutual + no-interaction + (too-many-followings:2000 | inactive:365 | no-posts)) | \
+  '(not-following-back + below-followers:5000) |
+   (mutual + no-interaction + (too-many-followings:2000 | inactive:365 | no-posts)) |
    deactivated' \
   -o results.json
 ```
