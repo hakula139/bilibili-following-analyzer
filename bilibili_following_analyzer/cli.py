@@ -220,7 +220,8 @@ def parse_args() -> argparse.Namespace:
         'filter options',
         'Specify filters to apply. Use --list-filters for available options.',
     )
-    filter_group.add_argument(
+    filter_selection = filter_group.add_mutually_exclusive_group()
+    filter_selection.add_argument(
         '-f',
         '--filter',
         action='append',
@@ -234,11 +235,10 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get('FILTER_MODE', 'and'),
         help='How to combine filters: and (all match) / or (any). Env: FILTER_MODE',
     )
-    filter_group.add_argument(
+    filter_selection.add_argument(
         '--filter-expr',
         type=str,
         metavar='EXPR',
-        default=os.environ.get('FILTER_EXPR'),
         help=(
             'Complex filter expression with nested AND/OR logic. '
             'Use + for AND, | for OR, () for grouping. '
@@ -300,7 +300,10 @@ def parse_args() -> argparse.Namespace:
         help=f'Custom cache directory (default: {get_cache_dir()})',
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.filters is None and args.filter_expr is None:
+        args.filter_expr = os.environ.get('FILTER_EXPR')
+    return args
 
 
 def _collect_video_interactions(
@@ -504,9 +507,7 @@ def apply_filter_expression(
 
 def _collect_filter_specs(args: argparse.Namespace) -> list[str]:
     """Collect filter specs from args and environment."""
-    filter_specs: list[str] = args.filters or []
-    env_filters = _env_list('FILTERS')
-    filter_specs.extend(env_filters)
+    filter_specs = args.filters if args.filters is not None else _env_list('FILTERS')
 
     if not filter_specs:
         raise SystemExit(
