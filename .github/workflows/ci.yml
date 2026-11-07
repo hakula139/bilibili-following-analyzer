@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: hakula139/devkit/actions/setup-nix@v1.0.0-rc.3
 
       - name: Check
         run: nix flake check --print-build-logs
@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: hakula139/devkit/actions/setup-nix@v1.0.0-rc.3
 
       - name: Install dependencies
         run: nix develop .#python -c uv sync --locked

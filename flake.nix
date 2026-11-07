@@ -11,8 +11,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
-    git-hooks-nix = {
-      url = "github:cachix/git-hooks.nix";
+    devkit = {
+      url = "github:hakula139/devkit/v1.0.0-rc.3";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -24,7 +24,7 @@
     {
       nixpkgs,
       flake-utils,
-      git-hooks-nix,
+      devkit,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -46,42 +46,9 @@
         # ----------------------------------------------------------------------
         # Pre-commit hooks
         # ----------------------------------------------------------------------
-        repositoryHooks = {
-          actionlint.enable = true;
-          check-added-large-files.enable = true;
-          check-yaml.enable = true;
-          cspell = {
-            enable = true;
-            args = [
-              "--no-progress"
-              "--no-must-find-files"
-            ];
-          };
-          deadnix.enable = true;
-          end-of-file-fixer.enable = true;
-          markdownlint-cli2 = {
-            enable = true;
-            entry = "${pkgs.markdownlint-cli2}/bin/markdownlint-cli2";
-            files = "\\.md$";
-          };
-          nixfmt.enable = true;
-          statix.enable = true;
-          trim-trailing-whitespace = {
-            enable = true;
-            args = [ "--markdown-linebreak-ext=md" ];
-          };
-        };
-
-        preCommitCheck = git-hooks-nix.lib.${system}.run {
+        preCommit = (devkit.lib.mkLib pkgs).preCommit {
           src = ./.;
-          package = pkgs.prek;
-          hooks = repositoryHooks;
-        };
-
-        preCommitHooks = git-hooks-nix.lib.${system}.run {
-          src = ./.;
-          package = pkgs.prek;
-          hooks = repositoryHooks // {
+          devHooks = {
             mypy = {
               enable = true;
               package = pkgs.uv;
@@ -128,15 +95,14 @@
         };
       in
       {
-        checks.pre-commit = preCommitCheck;
+        checks.pre-commit = preCommit.check;
 
         devShells.python = pkgs.mkShell pythonEnvironment;
 
         devShells.default = pkgs.mkShell (
           pythonEnvironment
           // {
-            packages = pythonEnvironment.packages ++ preCommitHooks.enabledPackages;
-            inherit (preCommitHooks) shellHook;
+            inputsFrom = [ preCommit.shell ];
           }
         );
 
