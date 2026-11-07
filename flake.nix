@@ -31,6 +31,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        dk = devkit.lib.mkLib pkgs;
 
         # ----------------------------------------------------------------------
         # Python environment
@@ -46,13 +47,13 @@
         # ----------------------------------------------------------------------
         # Pre-commit hooks
         # ----------------------------------------------------------------------
-        preCommit = (devkit.lib.mkLib pkgs).preCommit {
+        preCommit = dk.preCommit {
           src = ./.;
           devHooks = {
             mypy = {
               enable = true;
-              package = pkgs.uv;
-              entry = "${pkgs.uv}/bin/uv run --locked mypy";
+              package = null;
+              entry = "${pkgs.lib.getExe (dk.uvTool "mypy")}";
               language = "system";
               files = "\\.pyi?$";
               types_or = [
@@ -63,8 +64,8 @@
             };
             ruff = {
               enable = true;
-              package = pkgs.uv;
-              entry = "${pkgs.uv}/bin/uv run --locked ruff check --fix";
+              package = null;
+              entry = "${pkgs.lib.getExe (dk.uvTool "ruff")} check --fix";
               language = "system";
               types = [ "file" ];
               types_or = [
@@ -74,8 +75,8 @@
             };
             ruff-format = {
               enable = true;
-              package = pkgs.uv;
-              entry = "${pkgs.uv}/bin/uv run --locked ruff format";
+              package = null;
+              entry = "${pkgs.lib.getExe (dk.uvTool "ruff")} format";
               language = "system";
               types = [ "file" ];
               types_or = [
@@ -85,8 +86,8 @@
             };
             bandit = {
               enable = true;
-              package = pkgs.uv;
-              entry = "${pkgs.uv}/bin/uv run --locked bandit -r bilibili_following_analyzer/";
+              package = null;
+              entry = "${pkgs.lib.getExe (dk.uvTool "bandit")} -r bilibili_following_analyzer/";
               language = "system";
               files = "^bilibili_following_analyzer/.*\\.py$";
               pass_filenames = false;

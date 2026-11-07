@@ -58,3 +58,15 @@ jobs:
 
       - name: Test
         run: nix develop .#python -c uv run --no-sync pytest -q
+
+  result:
+    name: CI Result
+    if: ${{ !cancelled() }}
+    needs: [nix, python]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - name: Check results
+        uses: hakula139/devkit/actions/ci-result@v1.0.0-rc.3
