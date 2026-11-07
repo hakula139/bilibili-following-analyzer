@@ -25,7 +25,9 @@ referer
 rpid
 satsuki
 sessdata
+shfmt
 statix
+taplo
 tqdm
 venv
 vlist
