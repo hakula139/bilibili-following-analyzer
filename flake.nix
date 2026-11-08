@@ -10,7 +10,6 @@
   # ----------------------------------------------------------------------------
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    flake-utils.url = "github:numtide/flake-utils";
     devkit = {
       url = "github:hakula139/devkit/v1";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -23,11 +22,10 @@
   outputs =
     {
       nixpkgs,
-      flake-utils,
       devkit,
       ...
     }:
-    flake-utils.lib.eachDefaultSystem (
+    devkit.lib.eachSystem [ "aarch64-darwin" "x86_64-linux" ] (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -58,56 +56,31 @@
             markdownlint-cli2.enable = true;
             nixfmt.enable = true;
             prettier.enable = true;
+            ruff.enable = true;
+            ruff-format.enable = true;
             shellcheck.enable = true;
             shfmt.enable = true;
             sort-file-contents.enable = true;
             statix.enable = true;
             taplo.enable = true;
+
+            bandit =
+              let
+                package = pkgs.python313Packages.bandit;
+              in
+              {
+                enable = true;
+                name = "bandit";
+                inherit package;
+                entry = pkgs.lib.getExe' package "bandit";
+                files = "^bilibili_following_analyzer/.*\\.py$";
+              };
           };
 
-          devHooks = {
-            mypy = {
-              enable = true;
-              package = null;
-              entry = "${pkgs.lib.getExe (dk.uvTool "mypy")}";
-              language = "system";
-              files = "\\.pyi?$";
-              types_or = [
-                "python"
-                "pyi"
-              ];
-              pass_filenames = false;
-            };
-            ruff = {
-              enable = true;
-              package = null;
-              entry = "${pkgs.lib.getExe (dk.uvTool "ruff")} check --fix";
-              language = "system";
-              types = [ "file" ];
-              types_or = [
-                "python"
-                "pyi"
-              ];
-            };
-            ruff-format = {
-              enable = true;
-              package = null;
-              entry = "${pkgs.lib.getExe (dk.uvTool "ruff")} format";
-              language = "system";
-              types = [ "file" ];
-              types_or = [
-                "python"
-                "pyi"
-              ];
-            };
-            bandit = {
-              enable = true;
-              package = null;
-              entry = "${pkgs.lib.getExe (dk.uvTool "bandit")} -r bilibili_following_analyzer/";
-              language = "system";
-              files = "^bilibili_following_analyzer/.*\\.py$";
-              pass_filenames = false;
-            };
+          devHooks.mypy = {
+            enable = true;
+            package = dk.uvTool "mypy";
+            pass_filenames = false;
           };
         };
       in

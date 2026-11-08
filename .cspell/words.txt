@@ -4,6 +4,7 @@ buvid
 cachix
 capsys
 delenv
+devkit
 direnv
 dotenv
 envrc
@@ -22,6 +23,8 @@ pycache
 pyproject
 pytest
 referer
+repost
+reposts
 rpid
 satsuki
 sessdata
@@ -29,6 +32,7 @@ shfmt
 statix
 taplo
 tqdm
+uids
 venv
 vlist
 vmid
