@@ -70,7 +70,6 @@
               in
               {
                 enable = true;
-                name = "bandit";
                 inherit package;
                 entry = pkgs.lib.getExe' package "bandit";
                 files = "^bilibili_following_analyzer/.*\\.py$";
