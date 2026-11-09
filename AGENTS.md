@@ -12,7 +12,7 @@ Follow the user's global instructions. Keep this file focused on constraints tha
 
 ## Development
 
-Enter the development environment with `direnv allow` or `nix develop`, then synchronize dependencies with `uv sync --locked`. The shell installs repository hooks. Python hooks use the locked project tools and require the synchronized environment.
+Enter the development environment with `direnv allow` or `nix develop`, then synchronize dependencies with `uv sync --locked`. The shell installs repository hooks. The mypy development hook uses the locked project tools and requires the synchronized environment. Shared Nix hooks provide Ruff and Bandit.
 
 Run `nix flake check` for repository checks and the locked Python checks declared in CI. Use NumPy-style docstrings for non-obvious API contracts.
 
