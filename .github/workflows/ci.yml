@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   nix:
-    uses: hakula139/devkit/.github/workflows/nix.yml@v1
+    uses: hakula139/devkit/.github/workflows/nix.yml@v2
 
   python:
     name: Python Check
@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Nix
-        uses: hakula139/devkit/.github/actions/setup-nix@v1
+        uses: hakula139/devkit/.github/actions/setup-nix@v2
 
       - name: Install dependencies
         run: nix develop .#python -c uv sync --locked
@@ -48,4 +48,4 @@ jobs:
       actions: read
     steps:
       - name: Check results
-        uses: hakula139/devkit/.github/actions/ci-result@v1
+        uses: hakula139/devkit/.github/actions/ci-result@v2
