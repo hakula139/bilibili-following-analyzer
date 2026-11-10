@@ -30,7 +30,8 @@ def get_cache_dir() -> Path:
 
     Uses platformdirs to find the appropriate user cache directory:
     - Linux: ~/.cache/bilibili-analyzer/
-    - macOS: ~/Library/Caches/bilibili-analyzer/
+    - macOS: $XDG_CACHE_HOME/bilibili-analyzer/ when set, else
+      ~/Library/Caches/bilibili-analyzer/
     - Windows: C:/Users/<user>/AppData/Local/bilibili-analyzer/Cache/
 
     Returns
