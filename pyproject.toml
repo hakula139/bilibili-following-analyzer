@@ -31,7 +31,9 @@ build-backend = "hatchling.build"
 packages = ["bilibili_following_analyzer"]
 
 [tool.uv]
-python-preference = "system"
+required-version = ">=0.13"
+python-downloads = "never"
+python-preference = "only-system"
 
 [tool.ruff.format]
 quote-style = "single"
