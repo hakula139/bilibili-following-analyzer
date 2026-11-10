@@ -1,9 +1,10 @@
 # Python
 __pycache__/
-*.py[cod]
-*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+/.venv/
 /dist/
-.venv/
 
 # Nix
 .direnv/
@@ -11,14 +12,10 @@ __pycache__/
 /result
 /result-*
 
-# Caches
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
+# Local environment
+/.env
 
 # User data
-.env
-.env.local
 allow_list.txt
 results.json
 

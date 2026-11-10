@@ -58,6 +58,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
+          name = "bilibili-following-analyzer-dev";
           packages = with pkgs; [
             python313
             uv
