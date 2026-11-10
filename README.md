@@ -1,5 +1,7 @@
 # Bilibili Following Analyzer
 
+[![Coverage](https://codecov.io/gh/hakula139/bilibili-following-analyzer/graph/badge.svg)](https://codecov.io/gh/hakula139/bilibili-following-analyzer)
+
 Analyze your Bilibili following list using composable filters to find:
 
 - **Non-followers** who don't follow you back
