@@ -13,6 +13,7 @@ dotenv
 hakula
 isort
 khtml
+minversion
 mypy
 nixfmt
 nixos

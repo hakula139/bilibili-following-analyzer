@@ -45,9 +45,14 @@ ignore = ["S101", "S603", "S607"]
 lines-after-imports = 2
 combine-as-imports = true
 
-[tool.pytest.ini_options]
+[tool.pytest]
+minversion = "9.0"
 addopts = ["--cov", "--cov-report=term", "--cov-report=xml"]
+strict = true
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["bilibili_following_analyzer"]
 
 [tool.mypy]
 files = ["."]
