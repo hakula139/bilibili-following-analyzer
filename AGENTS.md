@@ -1,7 +1,5 @@
 # AGENTS.md: bilibili-following-analyzer
 
-Follow the user's global instructions. Keep this file focused on constraints that are not apparent from the source or tooling.
-
 ## Analysis contracts
 
 - Use the configured `.env` filters and allow list for analysis runs. Override them only when the user asks.
@@ -12,11 +10,14 @@ Follow the user's global instructions. Keep this file focused on constraints tha
 
 ## Development
 
-Enter the development environment with `direnv allow` or `nix develop`, then synchronize dependencies with `uv sync --locked`. The shell installs repository hooks. The mypy development hook uses the locked project tools and requires the synchronized environment. Shared Nix hooks provide Ruff and Bandit.
+Enter the dev shell with `direnv allow` or `nix develop`, and verify a change with:
 
-Run `nix flake check` for repository checks and the locked Python checks declared in CI. Use NumPy-style docstrings for non-obvious API contracts.
+```bash
+nix develop -c run-hooks
+nix develop -c uv run --locked pytest -q
+```
 
-Use topic branches and squash-merged PRs. Obtain approval for each PR before merging. Keep local plans under ignored `.agents/plans/`.
+Use NumPy-style docstrings for non-obvious API contracts.
 
 ## API reference
 

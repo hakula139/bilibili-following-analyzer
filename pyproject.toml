@@ -33,25 +33,17 @@ packages = ["bilibili_following_analyzer"]
 [tool.uv]
 python-preference = "system"
 
-[tool.ruff]
-target-version = "py310"
-line-length = 88
-
 [tool.ruff.format]
-indent-style = "space"
 quote-style = "single"
 line-ending = "lf"
-skip-magic-trailing-comma = false
 
 [tool.ruff.lint]
-select = ["B", "C4", "E", "F", "I", "SIM", "UP", "W"]
-ignore = []
+select = ["B", "C4", "E", "F", "I", "S", "SIM", "UP", "W"]
+ignore = ["S101", "S603", "S607"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-split-on-trailing-comma = true
 combine-as-imports = true
-force-single-line = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
