@@ -14,9 +14,7 @@ Analyze your Bilibili following list using composable filters to find:
 
 ## Installation
 
-Requires Python 3.13 on `PATH` and uv 0.13 or later, or run inside `nix develop`.
-
-Using [uv](https://docs.astral.sh/uv/) (recommended):
+Using [uv](https://docs.astral.sh/uv/) 0.13 or later with Python 3.13 on `PATH`, or inside `nix develop` (recommended):
 
 ```bash
 uv sync
