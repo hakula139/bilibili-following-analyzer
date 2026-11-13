@@ -3,7 +3,9 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+/.coverage
 /.venv/
+/coverage.xml
 /dist/
 
 # Nix

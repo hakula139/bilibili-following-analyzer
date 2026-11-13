@@ -1,3 +1,4 @@
+addopts
 autouse
 bilibili
 cachix
@@ -12,6 +13,7 @@ dotenv
 hakula
 isort
 khtml
+minversion
 mypy
 nixfmt
 nixos

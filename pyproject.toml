@@ -12,7 +12,13 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["diskcache-stubs>=5.6", "mypy>=1.19.1", "pytest>=9.1.1", "tqdm-stubs>=0.2"]
+dev = [
+  "diskcache-stubs>=5.6",
+  "mypy>=1.19.1",
+  "pytest>=9.1.1",
+  "pytest-cov>=7.1.0",
+  "tqdm-stubs>=0.2",
+]
 
 [project.scripts]
 bilibili-analyzer = "bilibili_following_analyzer.cli:main"
@@ -39,7 +45,13 @@ ignore = ["S101", "S603", "S607"]
 lines-after-imports = 2
 combine-as-imports = true
 
-[tool.pytest.ini_options]
+[tool.coverage.run]
+source = ["bilibili_following_analyzer"]
+
+[tool.pytest]
+minversion = "9.0"
+addopts = ["--quiet", "--cov", "--cov-report=term", "--cov-report=xml"]
+strict = true
 testpaths = ["tests"]
 
 [tool.mypy]

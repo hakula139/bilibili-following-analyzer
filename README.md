@@ -1,5 +1,9 @@
 # Bilibili Following Analyzer
 
+[![CI](https://github.com/hakula139/bilibili-following-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/hakula139/bilibili-following-analyzer/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/hakula139/bilibili-following-analyzer/graph/badge.svg)](https://codecov.io/gh/hakula139/bilibili-following-analyzer)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Analyze your Bilibili following list using composable filters to find:
 
 - **Non-followers** who don't follow you back
