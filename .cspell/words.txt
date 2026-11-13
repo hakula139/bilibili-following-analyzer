@@ -3,7 +3,6 @@ autouse
 bilibili
 cachix
 capsys
-deadnix
 delenv
 devkit
 direnv
@@ -29,7 +28,6 @@ rpid
 sessdata
 shellcheck
 shfmt
-statix
 strerror
 taplo
 testpaths
@@ -38,4 +36,3 @@ uids
 venv
 vlist
 vmid
-worktrees
