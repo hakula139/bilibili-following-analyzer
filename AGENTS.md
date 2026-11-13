@@ -14,7 +14,7 @@ Enter the dev shell with `direnv allow` or `nix develop`, and verify a change wi
 
 ```bash
 nix develop -c run-hooks
-nix develop -c uv run --locked pytest -q
+nix develop -c uv run --locked pytest
 ```
 
 Use NumPy-style docstrings for non-obvious API contracts.
