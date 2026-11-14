@@ -126,9 +126,23 @@ Complex filter expression with nested logic:
 # 2. Mutual followers who don't interact AND are problematic
 # 3. Deactivated accounts
 uv run bilibili-analyzer \
-  --filter-expr '(not-following-back + below-followers:5000) |
-   (mutual + no-interaction + (too-many-followings:2000 | inactive:365 | no-posts)) |
-   deactivated' \
+  --filter-expr \
+    '
+    (
+      not-following-back
+      + below-followers:5000
+    )
+    | (
+      mutual
+      + no-interaction
+      + (
+        too-many-followings:2000
+        | inactive:365
+        | no-posts
+      )
+    )
+    | deactivated
+    ' \
   -o results.json
 ```
 
