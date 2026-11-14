@@ -24,6 +24,27 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[BilibiliClient]:
         yield instance
 
 
+@pytest.mark.parametrize(
+    ('url', 'cookie'),
+    [
+        ('https://bilibili.com/', 'SESSDATA=example-session'),
+        ('https://api.bilibili.com/', 'SESSDATA=example-session'),
+        ('http://api.bilibili.com/', None),
+        ('https://api.biligame.com/', None),
+        ('https://example.test/', None),
+    ],
+)
+def test_session_cookie_is_limited_to_secure_bilibili_requests(
+    url: str, cookie: str | None
+) -> None:
+    with BilibiliClient(sessdata='example-session') as instance:
+        request = requests.Request('GET', url)
+
+        prepared = instance.session.prepare_request(request)
+
+        assert prepared.headers.get('Cookie') == cookie
+
+
 def test_bootstrap_and_signing_use_the_same_bounded_transport(
     monkeypatch: pytest.MonkeyPatch, client: BilibiliClient
 ) -> None:

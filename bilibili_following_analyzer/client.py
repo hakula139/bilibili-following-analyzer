@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import reduce
 from hashlib import md5
-from http.cookiejar import Cookie, CookieJar
 from typing import Any
 
 import requests
@@ -136,26 +135,13 @@ class BilibiliClient:
         self.delay = delay
 
         if sessdata:
-            cookie = Cookie(
-                version=0,
-                name='SESSDATA',
-                value=sessdata,
-                port=None,
-                port_specified=False,
+            self.session.cookies.set(
+                'SESSDATA',
+                sessdata,
                 domain='.bilibili.com',
-                domain_specified=True,
-                domain_initial_dot=True,
-                path='/',
-                path_specified=True,
                 secure=True,
-                expires=None,
-                discard=True,
-                comment=None,
-                comment_url=None,
                 rest={},
             )
-            # Use CookieJar.set_cookie which has proper type stubs
-            CookieJar.set_cookie(self.session.cookies, cookie)
 
         self._img_key: str | None = None
         self._sub_key: str | None = None

@@ -430,15 +430,15 @@ class RepostRatioFilter(Filter):
 
 
 class DeactivatedFilter(Filter):
-    """Filter deactivated or inaccessible accounts."""
+    """Filter deactivated accounts."""
 
     name = 'deactivated'
-    description = 'Users with deactivated or inaccessible accounts'
+    description = 'Users with deactivated accounts'
 
     def matches(self, following: Following, ctx: FilterContext) -> MatchInfo:
         activity = ctx.get_user_activity(following.mid)
         if activity.status == ActivityStatus.DEACTIVATED:
-            return MatchInfo.match(self.name, '账号已注销或不可访问')
+            return MatchInfo.match(self.name, '账号已注销')
         return MatchInfo.no_match()
 
 
@@ -678,34 +678,13 @@ class FilterExpressionParser:
         self._skip_whitespace()
         start = self.pos
 
-        # Read filter name (letters and hyphens)
-        while self.pos < self.length and (
-            self.expr[self.pos].isalpha()
-            or self.expr[self.pos] == '-'
-            or self.expr[self.pos].isdigit()
-        ):
+        while self.pos < self.length and self.expr[self.pos] not in ' \t\n+|()':
             self.pos += 1
 
-        name = self.expr[start : self.pos]
-        if not name:
+        if self.pos == start:
             raise ValueError(f'Expected filter name at position {start}')
 
-        # Check for parameter
-        param = None
-        if self.pos < self.length and self.expr[self.pos] == ':':
-            self.pos += 1
-            param_start = self.pos
-            # Read parameter (anything until whitespace or operator)
-            while self.pos < self.length and self.expr[self.pos] not in ' \t\n+|()':
-                self.pos += 1
-            param = self.expr[param_start : self.pos]
-
-        # Look up and create filter
-        if name not in FILTER_REGISTRY:
-            available = ', '.join(sorted(FILTER_REGISTRY.keys()))
-            raise ValueError(f'Unknown filter: {name!r}. Available: {available}')
-
-        return FILTER_REGISTRY[name].create(param)
+        return parse_filter_spec(self.expr[start : self.pos])
 
 
 def parse_filter_expression(expr: str) -> Filter:

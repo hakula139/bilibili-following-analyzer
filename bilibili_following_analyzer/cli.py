@@ -16,12 +16,11 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from .cache import (
-    USER_ACTIVITY_KEY_PREFIX,
     CachedDataFetcher,
     get_cache,
     get_cache_dir,
 )
-from .client import ActivityStatus, BilibiliAPIError, BilibiliClient, UserActivity
+from .client import ActivityStatus, BilibiliAPIError, BilibiliClient
 from .filters import (
     AndFilter,
     Filter,
@@ -54,31 +53,6 @@ def _report_activity_failures(ctx: FilterContext) -> None:
         f'\nWarning: activity fetch failed for {len(failed)} user(s) '
         f'({breakdown}); they were skipped by activity-based filters.'
     )
-
-
-def _purge_unavailable_activity(cache_fetcher: CachedDataFetcher) -> int:
-    """Evict cached activity entries whose status is ``UNAVAILABLE``.
-
-    Successful (``OK``) and ``DEACTIVATED`` entries stay cached so a re-run
-    only re-fetches the previously failed users. Returns the number of
-    entries purged.
-    """
-    cache = cache_fetcher.cache
-    if cache is None:
-        return 0
-
-    purged = 0
-    for key in list(cache):
-        if not isinstance(key, str) or not key.startswith(USER_ACTIVITY_KEY_PREFIX):
-            continue
-        value = cache.get(key)
-        if (
-            isinstance(value, UserActivity)
-            and value.status == ActivityStatus.UNAVAILABLE
-        ):
-            del cache[key]
-            purged += 1
-    return purged
 
 
 def _env_list(name: str) -> list[str]:
@@ -240,15 +214,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         '--clear-cache',
         action='store_true',
         help='Clear all cached data before running',
-    )
-    cache_group.add_argument(
-        '--retry-failed',
-        action='store_true',
-        help=(
-            'Evict cached UNAVAILABLE activity entries before running so '
-            'previously failed users are retried; OK/DEACTIVATED entries '
-            'stay cached and are skipped.'
-        ),
     )
     cache_group.add_argument(
         '--cache-dir',
@@ -432,9 +397,6 @@ def _setup_cache(args: argparse.Namespace) -> CachedDataFetcher:
     if args.clear_cache:
         cache_fetcher.clear()
         print('  Cache cleared')
-    elif args.retry_failed:
-        purged = _purge_unavailable_activity(cache_fetcher)
-        print(f'  Retry mode: purged {purged} previously failed activity entries')
 
     return cache_fetcher
 
