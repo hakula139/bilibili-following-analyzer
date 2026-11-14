@@ -18,6 +18,7 @@ __pycache__/
 /.env
 
 # User data
+/.cache/
 allow_list.txt
 results.json
 
