@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import reduce
 from hashlib import md5
-from http.cookiejar import Cookie, CookieJar
 from typing import Any
 
 import requests
@@ -67,15 +66,13 @@ class UserActivity:
     error_code: int | None = None
 
 
-# fmt: off
 # WBI signature encoding table
 MIXIN_KEY_ENC_TAB = [
     46, 47, 18,  2, 53,  8, 23, 32, 15, 50, 10, 31, 58,  3, 45, 35,
     27, 43,  5, 49, 33,  9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
     37, 48,  7, 16, 24, 55, 40, 61, 26, 17,  0,  1, 60, 51, 30,  4,
     22, 25, 54, 21, 56, 59,  6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
-]
-# fmt: on
+]  # fmt: skip
 
 
 class BilibiliAPIError(Exception):
@@ -136,26 +133,13 @@ class BilibiliClient:
         self.delay = delay
 
         if sessdata:
-            cookie = Cookie(
-                version=0,
-                name='SESSDATA',
-                value=sessdata,
-                port=None,
-                port_specified=False,
+            self.session.cookies.set(
+                'SESSDATA',
+                sessdata,
                 domain='.bilibili.com',
-                domain_specified=True,
-                domain_initial_dot=True,
-                path='/',
-                path_specified=True,
                 secure=True,
-                expires=None,
-                discard=True,
-                comment=None,
-                comment_url=None,
                 rest={},
             )
-            # Use CookieJar.set_cookie which has proper type stubs
-            CookieJar.set_cookie(self.session.cookies, cookie)
 
         self._img_key: str | None = None
         self._sub_key: str | None = None

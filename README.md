@@ -61,7 +61,7 @@ Use `--list-filters` to see all available filters:
 | `too-many-followings:N` | Users following more than N accounts                                     |
 | `inactive:DAYS`         | Users who haven't posted in DAYS                                         |
 | `repost-ratio:RATIO`    | Users whose plain repost ratio is at least RATIO (0.0-1.0)               |
-| `deactivated`           | Users with deactivated or inaccessible accounts                          |
+| `deactivated`           | Users with deactivated accounts                                          |
 | `no-posts`              | Users who have no posts at all                                           |
 
 ### Options
@@ -81,7 +81,6 @@ Use `--list-filters` to see all available filters:
 | `-o, --output`   | `OUTPUT`       | -       | Output results to file (.txt, .json, .csv)              |
 | `--no-cache`     | -              | -       | Disable disk caching (in-memory only)                   |
 | `--clear-cache`  | -              | -       | Clear cached data before running                        |
-| `--retry-failed` | -              | -       | Evict previously cached unavailable activity            |
 | `--cache-dir`    | -              | (auto)  | Custom cache directory                                  |
 
 ### Examples
@@ -89,19 +88,26 @@ Use `--list-filters` to see all available filters:
 Find users who don't follow back AND have few followers:
 
 ```bash
-uv run bilibili-analyzer -f not-following-back -f below-followers:5000
+uv run bilibili-analyzer \
+  -f not-following-back \
+  -f below-followers:5000
 ```
 
 Find inactive accounts or accounts with no posts (OR mode):
 
 ```bash
-uv run bilibili-analyzer -f inactive:365 -f no-posts --filter-mode or
+uv run bilibili-analyzer \
+  -f inactive:365 \
+  -f no-posts \
+  --filter-mode or
 ```
 
 Find users with excessive followings who don't interact:
 
 ```bash
-uv run bilibili-analyzer -f too-many-followings:3000 -f no-interaction
+uv run bilibili-analyzer \
+  -f too-many-followings:3000 \
+  -f no-interaction
 ```
 
 Using env variables:
@@ -119,10 +125,24 @@ Complex filter expression with nested logic:
 # 1. Non-followers with < 5000 fans
 # 2. Mutual followers who don't interact AND are problematic
 # 3. Deactivated accounts
-uv run bilibili-analyzer --filter-expr \
-  '(not-following-back + below-followers:5000) |
-   (mutual + no-interaction + (too-many-followings:2000 | inactive:365 | no-posts)) |
-   deactivated' \
+uv run bilibili-analyzer \
+  --filter-expr \
+    '
+    (
+      not-following-back
+      + below-followers:5000
+    )
+    | (
+      mutual
+      + no-interaction
+      + (
+        too-many-followings:2000
+        | inactive:365
+        | no-posts
+      )
+    )
+    | deactivated
+    ' \
   -o results.json
 ```
 
