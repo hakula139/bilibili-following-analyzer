@@ -9,54 +9,7 @@ from pathlib import Path
 import pytest
 
 from bilibili_following_analyzer.filters import FilterMatch, FilterResult, Following
-from bilibili_following_analyzer.utils import load_allow_list, output_results_to_file
-
-
-def test_allow_list_preserves_unique_positive_uids_and_comments(tmp_path: Path) -> None:
-    path = tmp_path / 'allow-list.txt'
-    path.write_text('# 保留用户\n123 # 用户\n\n456\n123\n', encoding='utf-8')
-
-    assert load_allow_list(path) == {123, 456}
-    assert load_allow_list(None) == set()
-
-
-@pytest.mark.parametrize('uid', ['invalid', '0', '-1', '1.5'])
-def test_invalid_allow_list_entries_fail_with_location(
-    tmp_path: Path, uid: str
-) -> None:
-    path = tmp_path / 'allow-list.txt'
-    path.write_text(f'123\n{uid}\n456\n', encoding='utf-8')
-
-    with pytest.raises(ValueError) as error:
-        load_allow_list(path)
-
-    assert str(path) in str(error.value)
-    assert '2' in str(error.value)
-
-
-def test_explicit_missing_allow_list_is_an_error(tmp_path: Path) -> None:
-    path = tmp_path / 'missing.txt'
-
-    with pytest.raises(ValueError) as error:
-        load_allow_list(path)
-
-    assert str(path) in str(error.value)
-
-
-def test_unreadable_allow_list_is_an_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / 'allow-list.txt'
-
-    def unreadable(self: Path, **kwargs: object) -> str:
-        raise PermissionError('permission denied')
-
-    monkeypatch.setattr(Path, 'read_text', unreadable)
-
-    with pytest.raises(ValueError) as error:
-        load_allow_list(path)
-
-    assert str(path) in str(error.value)
+from bilibili_following_analyzer.utils import output_results_to_file
 
 
 @pytest.fixture

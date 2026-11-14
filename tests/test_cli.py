@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from textwrap import dedent
 from unittest.mock import Mock
 
 import pytest
@@ -22,7 +24,8 @@ from bilibili_following_analyzer.filters import (
 
 
 @pytest.fixture(autouse=True)
-def configuration_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
     for name in (
         'MID',
         'SESSDATA',
@@ -36,6 +39,10 @@ def configuration_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         'NUM_DYNAMICS',
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def configure(contents: str) -> None:
+    Path('config.toml').write_text(dedent(contents), encoding='utf-8')
 
 
 @pytest.mark.parametrize(
@@ -56,13 +63,11 @@ def configuration_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     ],
 )
 def test_filter_selection_precedence(
-    monkeypatch: pytest.MonkeyPatch,
     argv: list[str],
     expression: str | None,
     specs: list[str] | None,
 ) -> None:
-    monkeypatch.setenv('FILTERS', 'inactive:365')
-    monkeypatch.setenv('FILTER_EXPR', 'mutual + no-interaction')
+    configure('filters = ["inactive:365"]\nfilter_expr = "mutual + no-interaction"\n')
 
     args = parse_args(argv)
 
@@ -82,38 +87,37 @@ def test_cli_filters_and_expression_conflict(
 
 
 @pytest.mark.parametrize(
-    ('environment', 'option', 'value', 'attribute', 'expected'),
+    ('key', 'option', 'value', 'attribute', 'expected'),
     [
-        ('MID', '--mid', '123', 'mid', 123),
-        ('DELAY', '--delay', '0.5', 'delay', 0.5),
-        ('NUM_VIDEOS', '--num-videos', '3', 'num_videos', 3),
-        ('NUM_DYNAMICS', '--num-dynamics', '4', 'num_dynamics', 4),
-        ('FILTER_MODE', '--filter-mode', 'or', 'filter_mode', 'or'),
+        ('mid', '--mid', '123', 'mid', 123),
+        ('delay', '--delay', '0.5', 'delay', 0.5),
+        ('num_videos', '--num-videos', '3', 'num_videos', 3),
+        ('num_dynamics', '--num-dynamics', '4', 'num_dynamics', 4),
+        ('filter_mode', '--filter-mode', 'or', 'filter_mode', 'or'),
     ],
 )
-def test_explicit_arguments_override_invalid_environment_defaults(
-    monkeypatch: pytest.MonkeyPatch,
-    environment: str,
+def test_explicit_arguments_override_invalid_config_defaults(
+    key: str,
     option: str,
     value: str,
     attribute: str,
     expected: int | float | str,
 ) -> None:
-    monkeypatch.setenv(environment, 'invalid')
+    configure(f'{key} = "invalid"\n')
 
-    assert getattr(parse_args([option, value]), attribute) == expected
+    args = parse_args([option, value])
 
+    assert getattr(args, attribute) == expected
     with pytest.raises(SystemExit) as error:
         parse_args([])
     assert error.value.code == 2
 
 
 @pytest.mark.parametrize('option', ['--help', '--list-filters'])
-def test_help_does_not_validate_unused_environment_defaults(
-    monkeypatch: pytest.MonkeyPatch, option: str, capsys: pytest.CaptureFixture[str]
+def test_help_does_not_load_configuration(
+    option: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for name in ('MID', 'DELAY', 'NUM_VIDEOS', 'NUM_DYNAMICS', 'FILTER_MODE'):
-        monkeypatch.setenv(name, 'invalid')
+    configure('invalid = [\n')
 
     with pytest.raises(SystemExit) as error:
         parse_args([option])
@@ -158,6 +162,143 @@ def test_zero_limits_and_delay_are_valid() -> None:
     assert (args.delay, args.num_videos, args.num_dynamics, args.limit) == (0, 0, 0, 0)
 
 
+def test_toml_settings_and_cookie_environment_are_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure(
+        """
+        mid = 123
+        allow_list = [456, 789, 456]
+        delay = 0.5
+        output = "report.json"
+        filters = ["mutual"]
+        filter_mode = "or"
+        num_videos = 3
+        num_dynamics = 4
+        """
+    )
+    monkeypatch.setenv('MID', '999')
+    monkeypatch.setenv('SESSDATA', 'example-cookie')
+
+    args = parse_args([])
+    override = parse_args(['--sessdata', 'other-cookie'])
+
+    assert (
+        args.mid,
+        args.allow_list,
+        args.delay,
+        args.output,
+        args.filters,
+        args.filter_mode,
+        args.num_videos,
+        args.num_dynamics,
+        args.sessdata,
+    ) == (
+        123,
+        [456, 789, 456],
+        0.5,
+        Path('report.json'),
+        ['mutual'],
+        'or',
+        3,
+        4,
+        'example-cookie',
+    )
+    assert override.sessdata == 'other-cookie'
+
+
+def test_default_config_is_optional_but_explicit_config_is_required(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = parse_args([])
+
+    assert args.mid is None
+    assert args.allow_list == []
+    with pytest.raises(SystemExit) as error:
+        parse_args(['--config', 'missing.toml'])
+    assert error.value.code == 2
+    assert 'missing.toml' in capsys.readouterr().err
+
+
+def test_explicit_config_and_relative_output_keep_cwd_semantics() -> None:
+    configure('not valid TOML')
+    directory = Path('settings')
+    directory.mkdir()
+    path = directory / 'analysis.toml'
+    path.write_text('mid = 123\noutput = "report.json"\n', encoding='utf-8')
+
+    args = parse_args(['--config', str(path)])
+
+    assert args.mid == 123
+    assert args.output == Path('report.json')
+
+
+@pytest.mark.parametrize(
+    'contents',
+    [
+        'mid = true',
+        'mid = 0',
+        'allow_list = "123"',
+        'allow_list = [true]',
+        'allow_list = [0]',
+        'allow_list = [1.5]',
+        'delay = true',
+        'delay = -0.1',
+        'delay = nan',
+        'delay = inf',
+        'output = 123',
+        'output = ""',
+        'filters = "mutual"',
+        'filters = [123]',
+        'filter_expr = []',
+        'filter_mode = "xor"',
+        'num_videos = true',
+        'num_videos = -1',
+        'num_dynamics = 1.5',
+        'num_dynamics = -1',
+    ],
+)
+def test_invalid_effective_toml_values_are_errors(contents: str) -> None:
+    configure(contents + '\n')
+
+    with pytest.raises(SystemExit) as error:
+        parse_args([])
+
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ('contents', 'message'),
+    [
+        ('mid = ["private-value"', 'Invalid TOML'),
+        ('unknown = "private-value"', 'Unknown configuration keys'),
+        ('[analysis]\nmid = 123', 'Unknown configuration keys'),
+        ('sessdata = "private-value"', 'Unknown configuration keys'),
+    ],
+)
+def test_bad_config_diagnostics_do_not_reveal_values(
+    contents: str, message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure(contents)
+
+    with pytest.raises(SystemExit) as error:
+        parse_args([])
+
+    assert error.value.code == 2
+    diagnostic = capsys.readouterr().err
+    assert message in diagnostic
+    assert 'private-value' not in diagnostic
+
+
+def test_cli_filters_disable_invalid_config_expression() -> None:
+    configure('filter_expr = 123\nfilters = ["inactive:365"]\n')
+
+    args = parse_args(['--filter', 'mutual'])
+
+    assert args.filter_expr is None
+    assert args.filters == ['mutual']
+
+
 @pytest.mark.parametrize('expression', [None, 'mutual + no-interaction'])
 def test_no_interaction_requires_a_content_sample_before_opening_client(
     monkeypatch: pytest.MonkeyPatch, expression: str | None
@@ -177,17 +318,17 @@ def test_no_interaction_requires_a_content_sample_before_opening_client(
     client.assert_not_called()
 
 
-def test_main_loads_environment_before_resolving_arguments(
+def test_main_applies_config_and_inline_allow_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def load_configuration() -> None:
-        monkeypatch.setenv('MID', '123')
-        monkeypatch.setenv('FILTERS', 'mutual')
-
-    analysis = Mock(return_value=[])
-    monkeypatch.setattr(
-        'bilibili_following_analyzer.cli.load_dotenv', load_configuration
+    configure(
+        """
+        mid = 123
+        filters = ["mutual"]
+        allow_list = [456, 789, 456]
+        """
     )
+    analysis = Mock(return_value=[])
     monkeypatch.setattr('bilibili_following_analyzer.cli._run_analysis', analysis)
     monkeypatch.setattr('sys.argv', ['bilibili-analyzer', '--no-cache'])
 
@@ -198,14 +339,13 @@ def test_main_loads_environment_before_resolving_arguments(
     assert args.mid == 123
     assert filter_obj.matches(Following(456, 'mutual user', 6), ctx).matched
     assert not filter_obj.matches(Following(789, 'one-way user', 2), ctx).matched
-    assert allow_list == set()
+    assert allow_list == {456, 789}
 
 
 def test_main_reports_missing_mid_before_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     analysis = Mock()
-    monkeypatch.setattr('bilibili_following_analyzer.cli.load_dotenv', lambda: None)
     monkeypatch.setattr('bilibili_following_analyzer.cli._run_analysis', analysis)
     monkeypatch.setattr('sys.argv', ['bilibili-analyzer'])
 
@@ -228,7 +368,6 @@ def test_main_filter_modes_and_expressions_agree_on_matching_behavior(
     monkeypatch: pytest.MonkeyPatch, selection: list[str], matched: bool
 ) -> None:
     analysis = Mock(return_value=[])
-    monkeypatch.setattr('bilibili_following_analyzer.cli.load_dotenv', lambda: None)
     monkeypatch.setattr('bilibili_following_analyzer.cli._run_analysis', analysis)
     monkeypatch.setattr(
         'sys.argv', ['bilibili-analyzer', '--mid', '123', '--no-cache', *selection]

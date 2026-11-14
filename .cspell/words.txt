@@ -9,6 +9,7 @@ direnv
 diskcache
 docstrings
 dotenv
+envrc
 hakula
 isort
 khtml
@@ -36,3 +37,4 @@ uids
 venv
 vlist
 vmid
+worktree

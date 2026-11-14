@@ -9,46 +9,6 @@ from pathlib import Path
 from .filters import FilterResult
 
 
-def load_allow_list(path: Path | None) -> set[int]:
-    """
-    Load allow list from a file.
-
-    Parameters
-    ----------
-    path : Path or None
-        Path to the allow list file. One UID per line, # for comments.
-
-    Returns
-    -------
-    set[int]
-        Set of user IDs in the allow list.
-    """
-    if path is None:
-        return set()
-    try:
-        contents = path.read_text(encoding='utf-8')
-    except OSError as error:
-        raise ValueError(
-            f'Cannot read allow list {path}: {error.strerror or error}'
-        ) from error
-
-    allow_list: set[int] = set()
-    for line_num, line in enumerate(contents.splitlines(), start=1):
-        line = line.split('#')[0].strip()
-        if line:
-            try:
-                mid = int(line)
-                if mid <= 0:
-                    raise ValueError
-                allow_list.add(mid)
-            except ValueError:
-                raise ValueError(
-                    f'Invalid UID at {path}:{line_num}: {line!r}'
-                ) from None
-
-    return allow_list
-
-
 def _get_display_details(result: FilterResult) -> str:
     """Get display string for filter match details."""
     return '; '.join(match.detail or match.name for match in result.matches)

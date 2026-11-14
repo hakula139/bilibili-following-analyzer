@@ -1,20 +1,14 @@
-# Bilibili Following Analyzer
+# bilibili-following-analyzer
 
 [![CI](https://github.com/hakula139/bilibili-following-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/hakula139/bilibili-following-analyzer/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/hakula139/bilibili-following-analyzer/graph/badge.svg)](https://codecov.io/gh/hakula139/bilibili-following-analyzer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Analyze your Bilibili following list using composable filters to find:
+Analyze your Bilibili following list with composable filters for missing follow-backs, inactivity, and interactions. An allow list preserves accounts you want to keep following.
 
-- **Non-followers** who don't follow you back
-- **Inactive accounts** who haven't posted recently
-- **Silent followers** who don't interact with your content
-- **Mass-following accounts** with too many followings
-- And more...
+## Install
 
-## Installation
-
-Using [uv](https://docs.astral.sh/uv/) 0.13 or later with Python 3.13 on `PATH`, or inside `nix develop` (recommended):
+Use Python 3.11 or later and [uv](https://docs.astral.sh/uv/) 0.13 or later. The [Nix](https://nixos.org/download/) development shell supplies the supported tools through `direnv allow` or `nix develop`.
 
 ```bash
 uv sync
@@ -28,26 +22,47 @@ pip install -e .
 
 ## Configuration
 
-Create a `.env` file in the project root:
+Copy the example files in your checkout:
 
 ```bash
-MID=12345
-SESSDATA="your_sessdata_here"
+cp config.example.toml config.toml
+cp .env.local.example .env.local
 ```
 
-Options with an environment variable in the table below can be set via `.env`. CLI arguments override `.env` values.
+Set your UID and analysis preferences in `config.toml`:
+
+```toml
+mid = 12345
+allow_list = [23456, 34567]
+filters = ["not-following-back", "below-followers:5000"]
+filter_mode = "and"
+```
+
+The default is `./config.toml` in the current working directory. A missing default file uses built-in defaults, while a missing explicit `--config PATH` file is an error. Relative output paths also use the current working directory. Unknown keys, malformed TOML, and invalid effective values are errors.
+
+CLI options override their corresponding TOML settings before value validation. A nonempty `filter_expr` takes precedence over `filters`. Explicit `--filter` options disable the configured expression, and `--filter-expr ''` falls back to configured filters. The allow list is an array of positive integer UIDs, and matching accounts are skipped before filtering. Duplicate UIDs are harmless.
+
+### Authentication
+
+For authenticated requests, set `SESSDATA` in `.env.local`. The checked-in `.envrc` loads this file with `direnv allow`. If you run without direnv, provide `SESSDATA` through the launching environment. Credentials are not read from TOML, and the CLI does not load dotenv files itself.
+
+To obtain the cookie:
+
+1. Log in to Bilibili in your browser.
+2. Open DevTools, then Application → Cookies.
+3. Copy the `SESSDATA` value into `.env.local`.
+
+Keep `config.toml`, `.env.local`, cached responses, and analysis results local. The old `.env` configuration and separate allow-list file are no longer read.
 
 ## Usage
 
 ```bash
-# Using the CLI entry point
-uv run bilibili-analyzer -f <filter> [OPTIONS]
-
-# Or as a Python module
-uv run python -m bilibili_following_analyzer -f <filter> [OPTIONS]
+uv run bilibili-analyzer
 ```
 
-### Available Filters
+The module entry point is also available as `uv run python -m bilibili_following_analyzer`.
+
+### Available filters
 
 Use `--list-filters` to see all available filters:
 
@@ -66,22 +81,23 @@ Use `--list-filters` to see all available filters:
 
 ### Options
 
-| Option           | Env Variable   | Default | Description                                             |
-| ---------------- | -------------- | ------- | ------------------------------------------------------- |
-| `-f, --filter`   | `FILTERS`      | -       | Add a filter (repeatable, comma-separated in env)       |
-| `--filter-mode`  | `FILTER_MODE`  | `and`   | Combine filters with `and` (all match) or `or` (any)    |
-| `--filter-expr`  | `FILTER_EXPR`  | -       | Complex filter expression with nested AND/OR logic      |
-| `--mid`          | `MID`          | -       | Your Bilibili UID                                       |
-| `--sessdata`     | `SESSDATA`     | -       | SESSDATA cookie for authenticated API calls             |
-| `--num-videos`   | `NUM_VIDEOS`   | 10      | Videos to check for interactions (for `no-interaction`) |
-| `--num-dynamics` | `NUM_DYNAMICS` | 20      | Dynamics to check for interactions                      |
-| `--allow-list`   | `ALLOW_LIST`   | -       | Path to file with UIDs to skip (one per line)           |
-| `--delay`        | `DELAY`        | 0.3     | Delay between API requests (seconds)                    |
-| `--limit`        | -              | -       | Analyze only first N followings                         |
-| `-o, --output`   | `OUTPUT`       | -       | Output results to file (.txt, .json, .csv)              |
-| `--no-cache`     | -              | -       | Disable disk caching (in-memory only)                   |
-| `--clear-cache`  | -              | -       | Clear cached data before running                        |
-| `--cache-dir`    | -              | (auto)  | Custom cache directory                                  |
+| Option           | TOML key       | Default | Description                                         |
+| ---------------- | -------------- | ------- | --------------------------------------------------- |
+| `--config`       | -              | (auto)  | TOML configuration path                             |
+| `-f, --filter`   | `filters`      | `[]`    | Add a filter (repeatable on the CLI)                |
+| `--filter-mode`  | `filter_mode`  | `and`   | Combine filters with `and` or `or`                  |
+| `--filter-expr`  | `filter_expr`  | -       | Filter expression with nested AND / OR logic        |
+| `--mid`          | `mid`          | -       | Your Bilibili UID                                   |
+| `--sessdata`     | -              | (env)   | Override the SESSDATA cookie from the environment   |
+| `--num-videos`   | `num_videos`   | 10      | Videos sampled for interactions                     |
+| `--num-dynamics` | `num_dynamics` | 20      | Dynamics sampled for interactions                   |
+| -                | `allow_list`   | `[]`    | UIDs to skip before filtering                       |
+| `--delay`        | `delay`        | 0.3     | Delay between API requests in seconds               |
+| `--limit`        | -              | -       | Analyze only the first N non-allowlisted followings |
+| `-o, --output`   | `output`       | -       | Export results as text, JSON, or CSV                |
+| `--no-cache`     | -              | false   | Disable disk caching                                |
+| `--clear-cache`  | -              | false   | Clear cached data before running                    |
+| `--cache-dir`    | -              | (auto)  | Custom cache directory                              |
 
 ### Examples
 
@@ -110,12 +126,10 @@ uv run bilibili-analyzer \
   -f no-interaction
 ```
 
-Using env variables:
+Use another configuration file:
 
 ```bash
-# In .env
-FILTERS=not-following-back,below-followers:5000
-FILTER_MODE=and
+uv run bilibili-analyzer --config settings/analysis.toml
 ```
 
 Complex filter expression with nested logic:
@@ -152,15 +166,16 @@ Expression syntax:
 - `|` for OR (lower precedence)
 - `()` for grouping
 
-### Allow List Format
+## Output
 
-```text
-34795       # comment (optional)
-1831567     # another user
-```
+The report lists matching accounts with their profile links and the contributing filter reasons. `--output` also exports the matches as `.txt`, `.json`, or `.csv`, according to the filename extension.
 
-## Getting Your SESSDATA
+Activity fetch failures leave activity unknown. Affected users are skipped by activity-based filters, and the report includes a failure summary. A successful exit does not mean every user's activity was available.
 
-1. Log in to Bilibili in your browser
-2. Open DevTools (F12) → Application → Cookies
-3. Find `SESSDATA` and copy its value
+## Development
+
+See [AGENTS.md](AGENTS.md) for contributor instructions and verification commands.
+
+## License
+
+Copyright (c) 2026 [Hakula](https://hakula.xyz). Licensed under the [MIT License](LICENSE).
