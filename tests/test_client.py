@@ -55,8 +55,8 @@ def test_bootstrap_and_signing_use_the_same_bounded_transport(
         'code': 0,
         'data': {
             'wbi_img': {
-                'img_url': 'https://example.test/' + 'a' * 32 + '.png',
-                'sub_url': 'https://example.test/' + 'b' * 32 + '.png',
+                'img_url': f'https://example.test/{"a" * 32}.png',
+                'sub_url': f'https://example.test/{"b" * 32}.png',
             }
         },
     }
