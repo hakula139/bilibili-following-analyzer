@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 from collections import Counter
@@ -12,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from dotenv import load_dotenv
 from tqdm import tqdm
 
 from .cache import (
@@ -21,6 +19,7 @@ from .cache import (
     get_cache_dir,
 )
 from .client import ActivityStatus, BilibiliAPIError, BilibiliClient
+from .config import DEFAULTS, load_config, validate_config
 from .filters import (
     AndFilter,
     Filter,
@@ -32,7 +31,7 @@ from .filters import (
     parse_filter_expression,
     parse_filter_spec,
 )
-from .utils import load_allow_list, output_results_to_file, print_filter_results
+from .utils import output_results_to_file, print_filter_results
 
 
 def _report_activity_failures(ctx: FilterContext) -> None:
@@ -55,26 +54,6 @@ def _report_activity_failures(ctx: FilterContext) -> None:
     )
 
 
-def _env_list(name: str) -> list[str]:
-    """
-    Get a list from an environment variable (comma-separated).
-
-    Parameters
-    ----------
-    name : str
-        The environment variable name.
-
-    Returns
-    -------
-    list[str]
-        List of values, or empty list if not set.
-    """
-    val = os.environ.get(name)
-    if not val:
-        return []
-    return [v.strip() for v in val.split(',') if v.strip()]
-
-
 class FilterHelpAction(argparse.Action):
     """Custom action to display filter help and exit."""
 
@@ -91,25 +70,44 @@ class FilterHelpAction(argparse.Action):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """
-    Parse command-line arguments.
+    """Merge local configuration and CLI overrides, then validate settings.
+
+    Parameters
+    ----------
+    argv : Sequence[str] or None
+        CLI arguments, or the process arguments when omitted. A missing default
+        ./config.toml is optional, while an explicit --config file is required.
 
     Returns
     -------
     argparse.Namespace
-        Parsed arguments.
+        Effective validated settings. CLI values override known TOML settings,
+        and SESSDATA comes from the environment unless explicitly overridden.
+
+    Raises
+    ------
+    SystemExit
+        If arguments or configuration are invalid. Help and filter help exit
+        before reading configuration.
     """
     parser = argparse.ArgumentParser(
         description='Analyze your Bilibili following list with composable filters',
+        argument_default=argparse.SUPPRESS,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Use --list-filters to see all available filters and their syntax.',
     )
 
     parser.add_argument(
+        '--config',
+        type=Path,
+        default=None,
+        metavar='PATH',
+        help='Read a TOML configuration file (default: ./config.toml, if present)',
+    )
+    parser.add_argument(
         '--mid',
         type=int,
-        default=os.environ.get('MID'),
-        help='Your Bilibili user ID (UID). Env: MID',
+        help='Your Bilibili user ID (UID)',
     )
     parser.add_argument(
         '--sessdata',
@@ -118,16 +116,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help='SESSDATA cookie for authentication. Env: SESSDATA',
     )
     parser.add_argument(
-        '--allow-list',
-        type=Path,
-        default=os.environ.get('ALLOW_LIST'),
-        help='Path to allow list file (one UID per line). Env: ALLOW_LIST',
-    )
-    parser.add_argument(
         '--delay',
         type=float,
-        default=os.environ.get('DELAY', '0.3'),
-        help='Delay between API requests in seconds (default: 0.3). Env: DELAY',
+        help='Delay between API requests in seconds (default: 0.3)',
     )
     parser.add_argument(
         '--limit',
@@ -135,14 +126,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help='Limit analysis to the first N followings (for testing)',
     )
-    output_default = os.environ.get('OUTPUT')
     parser.add_argument(
         '-o',
         '--output',
         type=Path,
         metavar='FILE',
-        default=Path(output_default) if output_default else None,
-        help='Output results to a file (supports .txt, .json, .csv). Env: OUTPUT',
+        help='Output results to a file (supports .txt, .json, .csv)',
     )
 
     # Filter arguments
@@ -157,13 +146,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action='append',
         dest='filters',
         metavar='FILTER',
-        help='Add a filter (repeatable). Format: name / name:param. Env: FILTERS',
+        help='Add a filter (repeatable). Format: name / name:param',
     )
     filter_group.add_argument(
         '--filter-mode',
         choices=['and', 'or'],
-        default=os.environ.get('FILTER_MODE', 'and'),
-        help='How to combine filters: and (all match) / or (any). Env: FILTER_MODE',
+        help='How to combine filters: and (all match) / or (any). Default: and',
     )
     filter_selection.add_argument(
         '--filter-expr',
@@ -172,7 +160,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             'Complex filter expression with nested AND/OR logic. '
             'Use + for AND, | for OR, () for grouping. '
-            'Example: "(a + b) | (c + d + (e | f))". Env: FILTER_EXPR'
+            'Example: "(a + b) | (c + d + (e | f))".'
         ),
     )
     filter_group.add_argument(
@@ -190,14 +178,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     interaction_group.add_argument(
         '--num-videos',
         type=int,
-        default=os.environ.get('NUM_VIDEOS', '10'),
-        help='Number of recent videos to check for interactions. Env: NUM_VIDEOS',
+        help='Number of recent videos to check for interactions (default: 10)',
     )
     interaction_group.add_argument(
         '--num-dynamics',
         type=int,
-        default=os.environ.get('NUM_DYNAMICS', '20'),
-        help='Number of recent dynamics to check for interactions. Env: NUM_DYNAMICS',
+        help='Number of recent dynamics to check for interactions (default: 20)',
     )
 
     # Cache options
@@ -221,19 +207,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=f'Custom cache directory (default: {get_cache_dir()})',
     )
 
+    parser.set_defaults(no_cache=False, clear_cache=False, cache_dir=None)
     args = parser.parse_args(argv)
-    if args.filter_mode not in ('and', 'or'):
-        parser.error('--filter-mode must be and or or')
-    if not math.isfinite(args.delay) or args.delay < 0:
-        parser.error('--delay must be a finite nonnegative number')
-    if args.mid is not None and args.mid <= 0:
-        parser.error('--mid must be a positive integer')
-    for name in ('limit', 'num_videos', 'num_dynamics'):
-        value = getattr(args, name)
-        if value is not None and value < 0:
-            parser.error(f'--{name.replace("_", "-")} must be a nonnegative integer')
-    if args.filters is None and args.filter_expr is None:
-        args.filter_expr = os.environ.get('FILTER_EXPR')
+    explicit = vars(args)
+    try:
+        settings = DEFAULTS | load_config(
+            args.config or Path('config.toml'), required=args.config is not None
+        )
+        if 'filters' in explicit:
+            settings['filter_expr'] = None
+        settings.update(
+            {name: value for name, value in explicit.items() if name in DEFAULTS}
+        )
+        settings = validate_config(settings)
+    except ValueError as error:
+        parser.error(str(error))
+
+    vars(args).update(settings)
+    if args.limit is not None and args.limit < 0:
+        parser.error('--limit must be a nonnegative integer')
     return args
 
 
@@ -359,8 +351,8 @@ def apply_filters(
 
 
 def _collect_filter_specs(args: argparse.Namespace) -> list[str]:
-    """Collect filter specs from args and environment."""
-    filter_specs = args.filters if args.filters is not None else _env_list('FILTERS')
+    """Require at least one filter when no expression is selected."""
+    filter_specs: list[str] = args.filters
 
     if not filter_specs:
         raise SystemExit(
@@ -469,13 +461,12 @@ def main() -> None:
     """
     Main entry point for the CLI.
 
-    Loads environment variables, parses arguments, and runs the analysis.
+    Reads local configuration, parses overrides, and runs the analysis.
     """
-    load_dotenv()
     args = parse_args()
 
     if not args.mid:
-        raise SystemExit('Error: --mid is required (or set MID in .env)')
+        raise SystemExit('Error: --mid is required (or set mid in config.toml)')
 
     try:
         if args.filter_expr:
@@ -488,7 +479,7 @@ def main() -> None:
             )
             filter_names = ', '.join(filter_.name for filter_ in filters)
             print(f'Filters: {filter_names} ({args.filter_mode.upper()} mode)')
-        allow_list = load_allow_list(args.allow_list)
+        allow_list = set(args.allow_list)
     except ValueError as error:
         raise SystemExit(f'Error: {error}') from None
 

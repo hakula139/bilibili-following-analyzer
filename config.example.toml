@@ -1,0 +1,11 @@
+mid = 12345
+allow_list = []
+delay = 0.3
+filters = ["not-following-back"]
+filter_mode = "and"
+num_videos = 10
+num_dynamics = 20
+
+# Set filter_expr to use an expression in preference to filters.
+# filter_expr = "not-following-back + below-followers:5000"
+# output = "results.json"
